@@ -19,9 +19,12 @@ import (
 func TestRunStopsOnSignal(t *testing.T) {
 	// 先在测试进程里订阅 SIGUSR1，把它的默认处置（终止进程）换成投递到通道。
 	// 这样即使信号早于 Run 完成订阅到达，也只会落进这里被丢弃，不会打死测试进程。
+	//
+	// 这个订阅刻意不注销：os/signal 按信号做引用计数，一旦计数归零就会恢复
+	// 致命默认处置。若在收尾时注销，循环里可能还有一个在途的 SIGUSR1，
+	// 正好赶上默认处置恢复而打死整个测试进程。
 	guard := make(chan os.Signal, 1)
 	signal.Notify(guard, syscall.SIGUSR1)
-	defer signal.Stop(guard)
 
 	var events []string
 	a := New(WithSignals(syscall.SIGUSR1))
