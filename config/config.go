@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"reflect"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,7 +22,9 @@ type fileSource struct {
 
 // Loader 按既定顺序合并多个配置来源。
 type Loader struct {
-	files []fileSource
+	files     []fileSource
+	envPrefix string
+	overrides map[string]string
 }
 
 // Option 用于定制 Loader。
@@ -41,6 +44,24 @@ func WithOptionalFile(paths ...string) Option {
 	return func(l *Loader) {
 		for _, p := range paths {
 			l.files = append(l.files, fileSource{path: p, optional: true})
+		}
+	}
+}
+
+// WithEnvPrefix 开启环境变量覆盖。变量名由前缀与配置路径拼成，
+// 例如前缀 APP、路径 server.http.addr 对应 APP_SERVER_HTTP_ADDR。
+func WithEnvPrefix(prefix string) Option {
+	return func(l *Loader) { l.envPrefix = prefix }
+}
+
+// WithOverride 追加显式覆盖，键为配置路径。通常来自命令行 --set key=value。
+func WithOverride(kv map[string]string) Option {
+	return func(l *Loader) {
+		if l.overrides == nil {
+			l.overrides = make(map[string]string, len(kv))
+		}
+		for k, v := range kv {
+			l.overrides[k] = v
 		}
 	}
 }
@@ -72,6 +93,24 @@ func (l *Loader) Load(dst any) error {
 		}
 		if err := yaml.Unmarshal(data, dst); err != nil {
 			return fmt.Errorf("config: 解析 %s 失败: %w", f.path, err)
+		}
+	}
+
+	if l.envPrefix != "" {
+		if err := applyEnv(dst, l.envPrefix); err != nil {
+			return err
+		}
+	}
+
+	// 按路径排序，保证多个覆盖出错时的报错顺序稳定。
+	paths := make([]string, 0, len(l.overrides))
+	for p := range l.overrides {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if err := SetPath(dst, p, l.overrides[p]); err != nil {
+			return err
 		}
 	}
 	return nil
