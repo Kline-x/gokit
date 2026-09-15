@@ -49,7 +49,8 @@ func (a *App) Start(ctx context.Context) error {
 	copy(components, a.components)
 	a.mu.Unlock()
 
-	if err := checkDuplicateNames(components); err != nil {
+	components, err := sortComponents(components)
+	if err != nil {
 		return err
 	}
 
@@ -107,15 +108,4 @@ func (a *App) Stop(ctx context.Context) error {
 		a.opts.logger.InfoContext(ctx, "组件已停止", slog.String("component", c.Name()))
 	}
 	return errors.Join(errs...)
-}
-
-func checkDuplicateNames(cs []Component) error {
-	seen := make(map[string]struct{}, len(cs))
-	for _, c := range cs {
-		if _, dup := seen[c.Name()]; dup {
-			return fmt.Errorf("组件名重复: %q", c.Name())
-		}
-		seen[c.Name()] = struct{}{}
-	}
-	return nil
 }
