@@ -1,10 +1,12 @@
 package httpserver
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -106,6 +108,82 @@ func TestRequestLogDefaultsStatusTo200(t *testing.T) {
 	}
 	if entry["status"] != float64(http.StatusOK) {
 		t.Errorf("status = %v, want 200（处理函数未显式 WriteHeader 时）", entry["status"])
+	}
+}
+
+// flushHijackRecorder 同时实现 Flusher 与 Hijacker，用来验证包装层的接口透传。
+type flushHijackRecorder struct {
+	*httptest.ResponseRecorder
+	flushed  bool
+	hijacked bool
+}
+
+func (f *flushHijackRecorder) Flush() { f.flushed = true }
+
+func (f *flushHijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	f.hijacked = true
+	return nil, nil, nil
+}
+
+func TestRequestLogPassesThroughOptionalInterfaces(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	rec := &flushHijackRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	h := RequestLog(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("包装后的 writer 丢失了 http.Flusher")
+			return
+		}
+		flusher.Flush()
+
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("包装后的 writer 丢失了 http.Hijacker")
+			return
+		}
+		if _, _, err := hijacker.Hijack(); err != nil {
+			t.Errorf("Hijack() error = %v", err)
+		}
+	}))
+
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stream", nil))
+
+	if !rec.flushed {
+		t.Error("Flush 未透传到底层 writer")
+	}
+	if !rec.hijacked {
+		t.Error("Hijack 未透传到底层 writer")
+	}
+}
+
+func TestRequestLogRecordsTimeoutStatusWhenOrderedCorrectly(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	// 推荐顺序：RequestLog 在外，Timeout 在内。
+	h := Chain(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(300 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+		}),
+		RequestLog(logger),
+		Timeout(20*time.Millisecond),
+	)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/slow", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+
+	var entry map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry); err != nil {
+		t.Fatalf("日志不是合法 JSON: %v, 内容=%q", err, buf.String())
+	}
+	if entry["status"] != float64(http.StatusServiceUnavailable) {
+		t.Errorf("日志里的 status = %v, want 503（超时响应应被如实记录）", entry["status"])
 	}
 }
 
