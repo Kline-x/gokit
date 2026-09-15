@@ -81,6 +81,12 @@ func (a *App) Start(ctx context.Context) error {
 
 // Stop 逆序停止已启动的组件，并汇总所有错误。重复调用是安全的空操作。
 func (a *App) Stop(ctx context.Context) error {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && a.opts.stopTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.opts.stopTimeout)
+		defer cancel()
+	}
+
 	a.mu.Lock()
 	if a.stopped {
 		a.mu.Unlock()
