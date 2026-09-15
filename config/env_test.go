@@ -50,3 +50,27 @@ func TestLoadFailsOnUnknownOverridePath(t *testing.T) {
 		t.Fatal("Load() error = nil, want 未知路径错误")
 	}
 }
+
+func TestLoadWithEmptyEnvPrefixStillApplies(t *testing.T) {
+	t.Setenv("WORKERS", "5")
+
+	var cfg testConfig
+	if err := New(WithEnvPrefix("")).Load(&cfg); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Workers != 5 {
+		t.Errorf("Workers = %d, want 5（显式传空前缀应启用无前缀的环境变量覆盖）", cfg.Workers)
+	}
+}
+
+func TestLoadWithoutEnvPrefixIgnoresEnvironment(t *testing.T) {
+	t.Setenv("WORKERS", "5")
+
+	cfg := testConfig{Workers: 1}
+	if err := New().Load(&cfg); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Workers != 1 {
+		t.Errorf("Workers = %d, want 1（未调用 WithEnvPrefix 时不应读环境变量）", cfg.Workers)
+	}
+}

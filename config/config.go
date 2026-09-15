@@ -22,9 +22,10 @@ type fileSource struct {
 
 // Loader 按既定顺序合并多个配置来源。
 type Loader struct {
-	files     []fileSource
-	envPrefix string
-	overrides map[string]string
+	files      []fileSource
+	envPrefix  string
+	envEnabled bool
+	overrides  map[string]string
 }
 
 // Option 用于定制 Loader。
@@ -50,8 +51,15 @@ func WithOptionalFile(paths ...string) Option {
 
 // WithEnvPrefix 开启环境变量覆盖。变量名由前缀与配置路径拼成，
 // 例如前缀 APP、路径 server.http.addr 对应 APP_SERVER_HTTP_ADDR。
+//
+// 传空前缀表示不加前缀，直接用路径本身作变量名（server.http.addr 对应
+// SERVER_HTTP_ADDR）。只要调用了本选项就会启用环境变量覆盖，
+// 空前缀与「从未调用」是两回事。
 func WithEnvPrefix(prefix string) Option {
-	return func(l *Loader) { l.envPrefix = prefix }
+	return func(l *Loader) {
+		l.envPrefix = prefix
+		l.envEnabled = true
+	}
 }
 
 // WithOverride 追加显式覆盖，键为配置路径。通常来自命令行 --set key=value。
@@ -96,7 +104,7 @@ func (l *Loader) Load(dst any) error {
 		}
 	}
 
-	if l.envPrefix != "" {
+	if l.envEnabled {
 		if err := applyEnv(dst, l.envPrefix); err != nil {
 			return err
 		}
