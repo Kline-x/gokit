@@ -123,23 +123,20 @@ func (a *App) Run(ctx context.Context) error {
 		slog.String("name", a.opts.name),
 		slog.String("version", a.opts.version))
 
-	var runErr error
+	// 始终准备好信号通道，只有配置了信号时才真正订阅。
+	// 未订阅的通道永远不会触发，因此一个 select 就能覆盖两种情形。
+	sigCh := make(chan os.Signal, 1)
 	if len(a.opts.signals) > 0 {
-		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, a.opts.signals...)
 		defer signal.Stop(sigCh)
+	}
 
-		select {
-		case <-ctx.Done():
-		case sig := <-sigCh:
-			a.opts.logger.InfoContext(ctx, "收到退出信号", slog.String("signal", sig.String()))
-		case runErr = <-a.fatalCh:
-		}
-	} else {
-		select {
-		case <-ctx.Done():
-		case runErr = <-a.fatalCh:
-		}
+	var runErr error
+	select {
+	case <-ctx.Done():
+	case sig := <-sigCh:
+		a.opts.logger.InfoContext(ctx, "收到退出信号", slog.String("signal", sig.String()))
+	case runErr = <-a.fatalCh:
 	}
 
 	stopErr := a.Stop(context.WithoutCancel(ctx))
