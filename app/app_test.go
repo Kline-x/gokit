@@ -72,6 +72,48 @@ func TestStopIsIdempotent(t *testing.T) {
 	}
 }
 
+// stopTriggeringComponent 在自己 Start 期间触发一次 Stop，
+// 用来确定性地复现「Start 与 Stop 交错」这一时序。
+type stopTriggeringComponent struct {
+	name   string
+	events *[]string
+	app    *App
+}
+
+func (s *stopTriggeringComponent) Name() string { return s.name }
+
+func (s *stopTriggeringComponent) Start(ctx context.Context) error {
+	*s.events = append(*s.events, "start:"+s.name)
+	// 模拟启动尚未走完时，另一条路径（例如信号处理）调用了 Stop。
+	return s.app.Stop(ctx)
+}
+
+func (s *stopTriggeringComponent) Stop(context.Context) error {
+	*s.events = append(*s.events, "stop:"+s.name)
+	return nil
+}
+
+func TestStartAbortsWhenStoppedConcurrently(t *testing.T) {
+	var events []string
+	a := New()
+	a.Register(
+		&fakeComponent{name: "a", events: &events},
+		&stopTriggeringComponent{name: "b", events: &events, app: a},
+		&fakeComponent{name: "c", events: &events},
+	)
+
+	err := a.Start(context.Background())
+	if err == nil {
+		t.Fatal("Start() error = nil, want 启动过程中被停止的错误")
+	}
+
+	// b 启动后必须被回收，c 不应再被启动。
+	want := []string{"start:a", "start:b", "stop:a", "stop:b"}
+	if !slices.Equal(events, want) {
+		t.Errorf("events = %v, want %v", events, want)
+	}
+}
+
 func TestRegisterRejectsDuplicateNames(t *testing.T) {
 	var events []string
 	a := New()

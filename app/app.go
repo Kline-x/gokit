@@ -8,6 +8,9 @@ import (
 	"sync"
 )
 
+// errStoppedDuringStart 表示启动过程中应用已被并发停止，剩余组件不再启动。
+var errStoppedDuringStart = errors.New("应用在启动过程中已被停止")
+
 // App 编排一组 Component 的生命周期：按依赖顺序启动、逆序停止。
 //
 // App 不是服务定位器：组件之间的依赖一律由构造时注入解决，
@@ -59,6 +62,16 @@ func (a *App) Start(ctx context.Context) error {
 			return startErr
 		}
 		a.mu.Lock()
+		if a.stopped {
+			a.mu.Unlock()
+			// Stop 已并发执行过，且它看不到这个刚启动的组件。
+			// 立刻回收它并中止剩余启动，避免组件被永久遗留。
+			if stopErr := c.Stop(context.WithoutCancel(ctx)); stopErr != nil {
+				return errors.Join(errStoppedDuringStart,
+					fmt.Errorf("回收组件 %s 失败: %w", c.Name(), stopErr))
+			}
+			return errStoppedDuringStart
+		}
 		a.started = append(a.started, c)
 		a.mu.Unlock()
 		a.opts.logger.InfoContext(ctx, "组件已启动", slog.String("component", c.Name()))
