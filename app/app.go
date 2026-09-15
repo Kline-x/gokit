@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
 	"sync"
 )
 
@@ -108,4 +110,51 @@ func (a *App) Stop(ctx context.Context) error {
 		a.opts.logger.InfoContext(ctx, "组件已停止", slog.String("component", c.Name()))
 	}
 	return errors.Join(errs...)
+}
+
+// Run 启动全部组件并阻塞，直到 ctx 取消、收到退出信号，或有组件通过 Fatal 上报致命错误。
+// 返回前会执行一次优雅停止，停止阶段的错误与致命错误一并返回。
+func (a *App) Run(ctx context.Context) error {
+	if err := a.Start(ctx); err != nil {
+		return err
+	}
+
+	a.opts.logger.InfoContext(ctx, "应用已启动",
+		slog.String("name", a.opts.name),
+		slog.String("version", a.opts.version))
+
+	var runErr error
+	if len(a.opts.signals) > 0 {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, a.opts.signals...)
+		defer signal.Stop(sigCh)
+
+		select {
+		case <-ctx.Done():
+		case sig := <-sigCh:
+			a.opts.logger.InfoContext(ctx, "收到退出信号", slog.String("signal", sig.String()))
+		case runErr = <-a.fatalCh:
+		}
+	} else {
+		select {
+		case <-ctx.Done():
+		case runErr = <-a.fatalCh:
+		}
+	}
+
+	stopErr := a.Stop(context.WithoutCancel(ctx))
+	a.opts.logger.Info("应用已退出", slog.String("name", a.opts.name))
+	return errors.Join(runErr, stopErr)
+}
+
+// Fatal 供组件在运行期上报致命错误，触发 Run 优雅退出。
+// 只保留第一个错误，后续调用直接丢弃，绝不阻塞调用方。
+func (a *App) Fatal(err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case a.fatalCh <- err:
+	default:
+	}
 }
