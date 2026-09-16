@@ -1,6 +1,6 @@
 module github.com/Kline-x/gokit/example/minimal
 
-go 1.27.1
+go 1.25.0
 
 replace github.com/Kline-x/gokit => ../..
 
