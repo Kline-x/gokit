@@ -1,0 +1,110 @@
+package transport
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+)
+
+func TestErrorCarriesCodeReasonAndMessage(t *testing.T) {
+	err := New(404, "USER_NOT_FOUND", "用户不存在")
+
+	if err.Code != 404 {
+		t.Errorf("Code = %d, want 404", err.Code)
+	}
+	if err.Reason != "USER_NOT_FOUND" {
+		t.Errorf("Reason = %q, want %q", err.Reason, "USER_NOT_FOUND")
+	}
+	if got := err.Error(); got == "" {
+		t.Error("Error() 返回空串")
+	}
+}
+
+func TestErrorIsMatchesByCodeAndReason(t *testing.T) {
+	sentinel := New(404, "USER_NOT_FOUND", "")
+	actual := New(404, "USER_NOT_FOUND", "id=7 的用户不存在")
+
+	if !errors.Is(actual, sentinel) {
+		t.Error("errors.Is 应当按 Code 与 Reason 匹配，与 Message 无关")
+	}
+
+	other := New(404, "ORDER_NOT_FOUND", "")
+	if errors.Is(actual, other) {
+		t.Error("Reason 不同的错误不应互相匹配")
+	}
+
+	wrongCode := New(500, "USER_NOT_FOUND", "")
+	if errors.Is(actual, wrongCode) {
+		t.Error("Code 不同的错误不应互相匹配")
+	}
+}
+
+func TestErrorIsWorksThroughWrapping(t *testing.T) {
+	sentinel := New(404, "USER_NOT_FOUND", "")
+	wrapped := fmt.Errorf("查询用户失败: %w", New(404, "USER_NOT_FOUND", "id=7"))
+
+	if !errors.Is(wrapped, sentinel) {
+		t.Error("被 fmt.Errorf 包装之后 errors.Is 仍应匹配")
+	}
+}
+
+func TestErrorAsExtractsConcreteType(t *testing.T) {
+	wrapped := fmt.Errorf("外层: %w", New(400, "BAD_INPUT", "name 不能为空"))
+
+	var target *Error
+	if !errors.As(wrapped, &target) {
+		t.Fatal("errors.As 未能取出 *Error")
+	}
+	if target.Reason != "BAD_INPUT" {
+		t.Errorf("Reason = %q, want %q", target.Reason, "BAD_INPUT")
+	}
+}
+
+func TestWithMetadataDoesNotMutateOriginal(t *testing.T) {
+	base := New(400, "BAD_INPUT", "参数有误")
+	derived := base.WithMetadata(map[string]string{"field": "name"})
+
+	if base.Metadata != nil {
+		t.Error("WithMetadata 不应改动原错误")
+	}
+	if derived.Metadata["field"] != "name" {
+		t.Errorf("Metadata = %v, want field=name", derived.Metadata)
+	}
+	if derived.Code != base.Code || derived.Reason != base.Reason {
+		t.Error("WithMetadata 丢失了 Code 或 Reason")
+	}
+}
+
+func TestWithCauseKeepsUnderlyingErrorReachable(t *testing.T) {
+	cause := errors.New("连接被拒绝")
+	err := New(500, "DB_UNAVAILABLE", "数据库不可用").WithCause(cause)
+
+	if !errors.Is(err, cause) {
+		t.Error("errors.Is 应能穿透到 WithCause 记录的原始错误")
+	}
+}
+
+func TestFromErrorWrapsUnknownError(t *testing.T) {
+	plain := errors.New("某个底层错误")
+	got := FromError(plain)
+
+	if got.Code != CodeInternal {
+		t.Errorf("Code = %d, want %d（未知错误应归为内部错误）", got.Code, CodeInternal)
+	}
+	if !errors.Is(got, plain) {
+		t.Error("FromError 应保留原始错误可被 errors.Is 找到")
+	}
+}
+
+func TestFromErrorPassesThroughTransportError(t *testing.T) {
+	original := New(404, "USER_NOT_FOUND", "用户不存在")
+	if got := FromError(original); got != original {
+		t.Error("FromError 对已经是 *Error 的输入应原样返回")
+	}
+}
+
+func TestFromErrorReturnsNilForNil(t *testing.T) {
+	if got := FromError(nil); got != nil {
+		t.Errorf("FromError(nil) = %v, want nil", got)
+	}
+}
