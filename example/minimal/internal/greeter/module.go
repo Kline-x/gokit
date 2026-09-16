@@ -25,6 +25,8 @@ var LocalSet = wire.NewSet(
 	infrastructure.NewGreetingRepo,
 	wire.Bind(new(domain.Repository), new(*infrastructure.GreetingRepo)),
 
+	infrastructure.NewMigrator,
+
 	application.NewLocalService,
 	wire.Bind(new(application.Service), new(*application.LocalService)),
 

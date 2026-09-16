@@ -39,17 +39,20 @@ func defaultConfig() Config {
 	}
 }
 
-// Bundle 汇总一次装配产出的全部对象，由 wire 填充。
+// Bundle 汇总一次装配产出的对象。
+//
+// 这里刻意不逐个列出基础设施组件：要托管哪些组件由 provideComponents 决定，
+// 而 provideComponents 的入参又由 wire 按当前选定的 ProviderSet 推导。
+// HTTP 字段保留是因为测试需要读它真实监听到的端口。
 type Bundle struct {
-	App    *app.App
-	Logger *log.Logger
-	DB     *sqldb.DB
-	HTTP   *httpserver.Server
+	App        *app.App
+	HTTP       *httpserver.Server
+	Components []app.Component
 }
 
-// Register 把各组件按启动顺序注册进 App。
+// Register 把组件按启动顺序交给 App。真正的先后由各组件的 DependsOn 决定。
 func (b *Bundle) Register() *app.App {
-	b.App.Register(b.Logger, b.DB, b.HTTP)
+	b.App.Register(b.Components...)
 	return b.App
 }
 
@@ -76,6 +79,20 @@ func provideHTTPServer(cfg httpserver.Config, h http.Handler, a *app.App) *https
 	return httpserver.New(cfg, h, httpserver.WithFatal(a.Fatal))
 }
 
+// provideComponents 列出本次装配要交给 App 托管的组件。
+//
+// 换用远程实现时，这个函数的入参要跟着 ProviderSet 一起改——
+// 不再需要的共享基础设施（例如数据库）必须同时从这里和 wire.Build 里去掉，
+// 否则进程仍会去连一个它根本不用的库。
+func provideComponents(
+	logger *log.Logger,
+	db *sqldb.DB,
+	migrator *infrastructure.Migrator,
+	srv *httpserver.Server,
+) []app.Component {
+	return []app.Component{logger, db, migrator, srv}
+}
+
 func main() {
 	var configPath string
 	flag.StringVar(&configPath, "config", "config.yaml", "配置文件路径")
@@ -98,11 +115,6 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := infrastructure.Migrate(ctx, b.DB); err != nil {
-		fmt.Fprintln(os.Stderr, "初始化数据库失败:", err)
-		os.Exit(1)
-	}
-
 	if err := b.Register().Run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "运行失败:", err)
 		os.Exit(1)

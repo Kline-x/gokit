@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Kline-x/gokit/example/minimal/internal/greeter/infrastructure"
+	"github.com/Kline-x/gokit/component/sqldb"
 )
 
 // 端到端验证：配置 → wire 装配 → App 启停 → HTTP 请求 → 分层调用 → SQLite 落库。
@@ -17,7 +17,7 @@ func TestGreetEndToEnd(t *testing.T) {
 	cfg.HTTP.Addr = "127.0.0.1:0"
 	// 内存库靠 cache=shared 在连接之间共享，只要连接池里还有活连接就不会消失。
 	// 这依赖 sqldb 默认的 MaxIdleConns 大于 0——若把空闲连接数调成 0，
-	// Migrate 用完的连接会被立刻关掉，后续请求将看不到这张表。
+	// migrator 用完的连接会被立刻关掉，后续请求将看不到这张表。
 	cfg.DB.DSN = "file:e2e?mode=memory&cache=shared"
 	cfg.Log.Output = filepath.Join(t.TempDir(), "app.log")
 
@@ -27,9 +27,6 @@ func TestGreetEndToEnd(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := infrastructure.Migrate(ctx, b.DB); err != nil {
-		t.Fatalf("Migrate() error = %v", err)
-	}
 
 	a := b.Register()
 	if err := a.Start(ctx); err != nil {
@@ -63,8 +60,21 @@ func TestGreetEndToEnd(t *testing.T) {
 		}
 	}
 
+	// Bundle 不再单列 DB 字段（哪些基础设施组件存在由 provideComponents 决定），
+	// 从托管组件列表里按类型取出数据库组件来做断言。
+	var db *sqldb.DB
+	for _, c := range b.Components {
+		if d, ok := c.(*sqldb.DB); ok {
+			db = d
+			break
+		}
+	}
+	if db == nil {
+		t.Fatalf("Components 中未找到 *sqldb.DB")
+	}
+
 	var count int
-	row := b.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM greetings WHERE name = ?`, "gokit")
+	row := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM greetings WHERE name = ?`, "gokit")
 	if err := row.Scan(&count); err != nil {
 		t.Fatalf("统计失败: %v", err)
 	}
