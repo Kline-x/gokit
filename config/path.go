@@ -37,9 +37,10 @@ func SetPath(dst any, path, value string) error {
 
 func fieldByConfigName(v reflect.Value, name string) (reflect.Value, bool) {
 	t := v.Type()
+	// 第一遍：只看非内联字段。
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
-		if sf.PkgPath != "" {
+		if sf.PkgPath != "" || isInline(sf) {
 			continue
 		}
 		cn := configName(sf)
@@ -48,7 +49,33 @@ func fieldByConfigName(v reflect.Value, name string) (reflect.Value, bool) {
 		}
 		return v.Field(i), true
 	}
+	// 第二遍：内联字段的键在父级展开，递归进去找。
+	for i := 0; i < t.NumField(); i++ {
+		sf := t.Field(i)
+		if sf.PkgPath != "" || !isInline(sf) {
+			continue
+		}
+		fv := v.Field(i)
+		if fv.Kind() != reflect.Struct {
+			continue
+		}
+		if f, ok := fieldByConfigName(fv, name); ok {
+			return f, true
+		}
+	}
 	return reflect.Value{}, false
+}
+
+// isInline 判断字段是否带 yaml 的 inline 选项。内联字段的键在父级展开，
+// 因此它的路径也应当沿用父前缀，而不是多出一层字段名。
+func isInline(sf reflect.StructField) bool {
+	opts := strings.Split(sf.Tag.Get("yaml"), ",")
+	for _, opt := range opts[1:] {
+		if strings.TrimSpace(opt) == "inline" {
+			return true
+		}
+	}
+	return false
 }
 
 func configName(sf reflect.StructField) string {
@@ -112,10 +139,13 @@ func setScalar(v reflect.Value, s string) error {
 			return nil
 		}
 		parts := strings.Split(s, ",")
-		for i := range parts {
-			parts[i] = strings.TrimSpace(parts[i])
+		// 逐个 SetString 而不是直接赋一个 []string：元素类型可能是底层为 string
+		// 的具名类型，那时 []string 并不可直接赋值过去。
+		out := reflect.MakeSlice(v.Type(), len(parts), len(parts))
+		for i, p := range parts {
+			out.Index(i).SetString(strings.TrimSpace(p))
 		}
-		v.Set(reflect.ValueOf(parts))
+		v.Set(out)
 	default:
 		return fmt.Errorf("不支持的字段类型 %s", v.Type())
 	}

@@ -1,7 +1,9 @@
 // Package config 负责把 YAML 文件、环境变量与显式覆盖逐级合并进配置结构体。
 //
 // 合并顺序固定为：文件（按传入顺序）→ 环境变量 → 显式覆盖。
-// 配置结构体的字段只能用值类型，不能用指针，否则路径覆盖无法定位字段。
+// 配置结构体的字段只能用值类型，不能用指针，否则路径覆盖无法定位字段；
+// 带指针字段、或展开后不含任何可寻址叶子的结构体字段（如 time.Time）的
+// 配置结构体，会被 Load 直接拒绝，而不是静默失效。
 package config
 
 import (
@@ -85,10 +87,18 @@ func New(opts ...Option) *Loader {
 
 // Load 把各配置来源依次合并进 dst。dst 必须是指向结构体的非空指针。
 // 某个来源未提供的字段保持 dst 的原值，因此调用方可以先填好默认值再 Load。
+//
+// dst 会先经过 Validate 校验：带指针字段、或展开后不含任何可寻址叶子的
+// 结构体字段（如 time.Time），会被直接拒绝，不会等到读文件、读环境变量
+// 才发现覆盖不生效。
 func (l *Loader) Load(dst any) error {
 	v := reflect.ValueOf(dst)
 	if v.Kind() != reflect.Pointer || v.IsNil() || v.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("config: dst 必须是指向结构体的非空指针，得到 %T", dst)
+	}
+
+	if err := Validate(dst); err != nil {
+		return err
 	}
 
 	for _, f := range l.files {

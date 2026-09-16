@@ -83,3 +83,66 @@ func TestPathsEnumeratesLeafFieldsInOrder(t *testing.T) {
 		}
 	}
 }
+
+type namedOrigin string
+
+type namedSliceConfig struct {
+	Origins []namedOrigin `yaml:"origins"`
+}
+
+func TestSetPathHandlesNamedSliceElementType(t *testing.T) {
+	var cfg namedSliceConfig
+	if err := SetPath(&cfg, "origins", "a, b ,c"); err != nil {
+		t.Fatalf("SetPath() error = %v", err)
+	}
+	if len(cfg.Origins) != 3 || cfg.Origins[0] != "a" || cfg.Origins[2] != "c" {
+		t.Errorf("Origins = %v, want [a b c]", cfg.Origins)
+	}
+}
+
+type skippedFieldConfig struct {
+	Kept    string `yaml:"kept"`
+	Ignored string `yaml:"-"`
+	Tagged  string `yaml:"tagged,omitempty"`
+}
+
+func TestConfigNameHonoursTagOptionsAndSkips(t *testing.T) {
+	got := Paths(&skippedFieldConfig{})
+	want := []string{"kept", "tagged"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("Paths() = %v, want %v", got, want)
+	}
+
+	var cfg skippedFieldConfig
+	if err := SetPath(&cfg, "tagged", "v"); err != nil {
+		t.Fatalf("SetPath(tagged) error = %v（带选项的标签名应可寻址）", err)
+	}
+	if err := SetPath(&cfg, "ignored", "v"); err == nil {
+		t.Error("SetPath(ignored) error = nil，yaml:\"-\" 的字段不应可寻址")
+	}
+}
+
+type commonConfig struct {
+	A string `yaml:"a"`
+}
+
+type inlineConfig struct {
+	Common commonConfig `yaml:",inline"`
+	B      string       `yaml:"b"`
+}
+
+func TestInlineFieldsFlattenIntoParentPaths(t *testing.T) {
+	got := Paths(&inlineConfig{})
+	want := []string{"a", "b"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("Paths() = %v, want %v（内联字段的键应在父级展开）", got, want)
+	}
+
+	var cfg inlineConfig
+	if err := SetPath(&cfg, "a", "x"); err != nil {
+		t.Fatalf("SetPath(a) error = %v", err)
+	}
+	if cfg.Common.A != "x" {
+		t.Errorf("Common.A = %q, want %q", cfg.Common.A, "x")
+	}
+}
