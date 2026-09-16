@@ -12,20 +12,24 @@ import (
 )
 
 // Config 是关系库组件的配置。
+//
+// 数值字段一律遵循同一个约定：0 表示「采用默认值」，-1 表示「显式采用
+// database/sql 的零值语义」。之所以需要这个哨兵，是因为配置结构体只能用
+// 值类型字段，YAML 里「没写这个字段」和「写了 0」无法区分。
 type Config struct {
 	// Driver 是已注册的 database/sql 驱动名，例如 mysql、pgx、sqlite。
 	Driver string `yaml:"driver"`
 	// DSN 是驱动自己的连接串。
 	DSN string `yaml:"dsn"`
-	// MaxOpenConns 是连接池上限。
+	// MaxOpenConns 是连接池上限。0 表示使用默认值，-1 表示不限连接数。
 	MaxOpenConns int `yaml:"max_open_conns"`
-	// MaxIdleConns 是空闲连接上限。
+	// MaxIdleConns 是空闲连接上限。0 表示使用默认值，-1 表示不保留空闲连接。
 	MaxIdleConns int `yaml:"max_idle_conns"`
-	// ConnMaxLifetime 是单条连接的最长存活时间。
+	// ConnMaxLifetime 是单条连接的最长存活时间。0 表示使用默认值，-1 表示永不过期。
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
-	// ConnMaxIdleTime 是单条连接的最长空闲时间。
+	// ConnMaxIdleTime 是单条连接的最长空闲时间。0 表示使用默认值，-1 表示不因空闲而回收。
 	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time"`
-	// PingTimeout 是 Start 阶段探活的超时。
+	// PingTimeout 是 Start 阶段探活的超时。0 表示使用默认值，-1 表示不设超时。
 	PingTimeout time.Duration `yaml:"ping_timeout"`
 }
 
@@ -40,23 +44,38 @@ func DefaultConfig() Config {
 	}
 }
 
+// resolveInt 把配置里的哨兵值翻译成 database/sql 需要的实际值：
+// 0 取默认值，-1 取 database/sql 的零值语义，其余原样返回。
+func resolveInt(v, def int) int {
+	switch {
+	case v == 0:
+		return def
+	case v < 0:
+		return 0
+	default:
+		return v
+	}
+}
+
+// resolveDuration 与 resolveInt 同理，用于时长字段。
+func resolveDuration(v, def time.Duration) time.Duration {
+	switch {
+	case v == 0:
+		return def
+	case v < 0:
+		return 0
+	default:
+		return v
+	}
+}
+
 func (c Config) withDefaults() Config {
 	d := DefaultConfig()
-	if c.MaxOpenConns == 0 {
-		c.MaxOpenConns = d.MaxOpenConns
-	}
-	if c.MaxIdleConns == 0 {
-		c.MaxIdleConns = d.MaxIdleConns
-	}
-	if c.ConnMaxLifetime == 0 {
-		c.ConnMaxLifetime = d.ConnMaxLifetime
-	}
-	if c.ConnMaxIdleTime == 0 {
-		c.ConnMaxIdleTime = d.ConnMaxIdleTime
-	}
-	if c.PingTimeout == 0 {
-		c.PingTimeout = d.PingTimeout
-	}
+	c.MaxOpenConns = resolveInt(c.MaxOpenConns, d.MaxOpenConns)
+	c.MaxIdleConns = resolveInt(c.MaxIdleConns, d.MaxIdleConns)
+	c.ConnMaxLifetime = resolveDuration(c.ConnMaxLifetime, d.ConnMaxLifetime)
+	c.ConnMaxIdleTime = resolveDuration(c.ConnMaxIdleTime, d.ConnMaxIdleTime)
+	c.PingTimeout = resolveDuration(c.PingTimeout, d.PingTimeout)
 	return c
 }
 
@@ -88,10 +107,7 @@ func (d *DB) Name() string { return "sqldb" }
 
 // Start 实现 app.Component，通过一次 Ping 确认连接可用。
 func (d *DB) Start(ctx context.Context) error {
-	if err := d.Health(ctx); err != nil {
-		return fmt.Errorf("sqldb: 启动探活失败: %w", err)
-	}
-	return nil
+	return d.Health(ctx)
 }
 
 // Stop 实现 app.Component，关闭连接池。
@@ -104,7 +120,13 @@ func (d *DB) Stop(context.Context) error {
 
 // Health 实现 app.HealthChecker。
 func (d *DB) Health(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, d.cfg.PingTimeout)
-	defer cancel()
-	return d.DB.PingContext(ctx)
+	if d.cfg.PingTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d.cfg.PingTimeout)
+		defer cancel()
+	}
+	if err := d.DB.PingContext(ctx); err != nil {
+		return fmt.Errorf("sqldb: 探活失败: %w", err)
+	}
+	return nil
 }
