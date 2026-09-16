@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package greeter.v1;
+
+option go_package = "github.com/Kline-x/gokit/example/minimal/api/greeter/v1;greeterv1";
+
+// Greeter 是问候模块对外的契约。
+// 模块拆成独立服务后，这份 proto 随模块一起搬走，调用方按它生成客户端。
+service Greeter {
+  // Greet 返回某个名字的问候语。
+  rpc Greet(GreetRequest) returns (GreetReply);
+}
+
+message GreetRequest {
+  // name 是被问候者的名字，不能为空。
+  string name = 1;
+}
+
+message GreetReply {
+  // text 是问候语。
+  string text = 1;
+}

@@ -3,10 +3,12 @@
 package interfaces
 
 import (
-	"encoding/json"
+	"log/slog"
 	"net/http"
 
+	"github.com/Kline-x/gokit/component/log"
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/application"
+	"github.com/Kline-x/gokit/transport"
 )
 
 // HTTPHandler 把问候用例暴露成 HTTP 接口。
@@ -30,12 +32,30 @@ func (h *HTTPHandler) greet(w http.ResponseWriter, r *http.Request) {
 		Name: r.PathValue("name"),
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// HTTP 中间件看不到 handler 的错误（http.Handler 不返回 error），
+		// 而 RenderError 只会把泛化描述发给客户端。底层原因就靠这一行留下来。
+		//
+		// 客户端自己传错参数不算服务端故障，记到 warn 就够了；
+		// 5xx 才是真需要有人看的。
+		if transport.Code(err) >= transport.CodeInternal {
+			log.FromContext(r.Context()).ErrorContext(r.Context(), "greet 处理失败",
+				slog.String("name", r.PathValue("name")),
+				slog.Any("error", err))
+		} else {
+			log.FromContext(r.Context()).WarnContext(r.Context(), "greet 处理失败",
+				slog.String("name", r.PathValue("name")),
+				slog.Any("error", err))
+		}
+
+		if renderErr := transport.RenderError(w, err); renderErr != nil {
+			log.FromContext(r.Context()).ErrorContext(r.Context(), "写出错误响应失败",
+				slog.Any("error", renderErr))
+		}
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(map[string]string{"text": reply.Text}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if renderErr := transport.Render(w, map[string]string{"text": reply.Text}); renderErr != nil {
+		log.FromContext(r.Context()).ErrorContext(r.Context(), "写出响应失败",
+			slog.Any("error", renderErr))
 	}
 }

@@ -1,5 +1,5 @@
 // Command minimal 是 gokit 的最小可用单体示例：
-// 一个分层的问候模块，通过 HTTP 暴露，数据落在 SQLite。
+// 一个分层的问候模块，同一套服务同时通过 HTTP 与 gRPC 对外提供，数据落在 SQLite。
 package main
 
 import (
@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite" // 注册 sqlite 驱动，框架本身不绑定任何驱动
 
 	"github.com/Kline-x/gokit/app"
+	"github.com/Kline-x/gokit/component/grpcserver"
 	"github.com/Kline-x/gokit/component/httpserver"
 	"github.com/Kline-x/gokit/component/log"
 	"github.com/Kline-x/gokit/component/sqldb"
@@ -24,6 +25,7 @@ import (
 type Config struct {
 	Log  log.Config        `yaml:"log"`
 	HTTP httpserver.Config `yaml:"http"`
+	GRPC grpcserver.Config `yaml:"grpc"`
 	DB   sqldb.Config      `yaml:"db"`
 }
 
@@ -35,6 +37,7 @@ func defaultConfig() Config {
 	return Config{
 		Log:  log.DefaultConfig(),
 		HTTP: httpserver.DefaultConfig(),
+		GRPC: grpcserver.DefaultConfig(),
 		DB:   dbCfg,
 	}
 }
@@ -47,6 +50,7 @@ func defaultConfig() Config {
 type Bundle struct {
 	App        *app.App
 	HTTP       *httpserver.Server
+	GRPC       *grpcserver.Server
 	Components []app.Component
 }
 
@@ -58,6 +62,7 @@ func (b *Bundle) Register() *app.App {
 
 func provideLogConfig(cfg Config) log.Config         { return cfg.Log }
 func provideHTTPConfig(cfg Config) httpserver.Config { return cfg.HTTP }
+func provideGRPCConfig(cfg Config) grpcserver.Config { return cfg.GRPC }
 func provideDBConfig(cfg Config) sqldb.Config        { return cfg.DB }
 
 func provideApp(logger *log.Logger) *app.App {
@@ -79,6 +84,30 @@ func provideHTTPServer(cfg httpserver.Config, h http.Handler, a *app.App) *https
 	return httpserver.New(cfg, h, httpserver.WithFatal(a.Fatal))
 }
 
+// provideServiceRegistrars 列出要挂到 gRPC 服务器上的服务。
+// 各业务模块的 gRPC 接口层在这里汇总。
+func provideServiceRegistrars(greeter *interfaces.GRPCHandler) []grpcserver.ServiceRegistrar {
+	return []grpcserver.ServiceRegistrar{greeter}
+}
+
+// provideGRPCServer 把 App.Fatal 接给服务。
+// 只需要传 RequestLog：Recover 与 ErrorMapper 由 grpcserver 默认装在最内层，
+// 因此这里传进去的天然包在它们外面，RequestLog 看到的正是已经翻译过的状态码。
+func provideGRPCServer(
+	cfg grpcserver.Config,
+	services []grpcserver.ServiceRegistrar,
+	logger *log.Logger,
+	a *app.App,
+) *grpcserver.Server {
+	return grpcserver.New(cfg, services,
+		grpcserver.WithFatal(a.Fatal),
+		grpcserver.WithLogger(logger.Logger),
+		grpcserver.WithUnaryInterceptor(
+			grpcserver.RequestLog(logger.Logger),
+		),
+	)
+}
+
 // provideComponents 列出本次装配要交给 App 托管的组件。
 //
 // 换用远程实现时，这个函数的入参要跟着 ProviderSet 一起改——
@@ -88,9 +117,10 @@ func provideComponents(
 	logger *log.Logger,
 	db *sqldb.DB,
 	migrator *infrastructure.Migrator,
-	srv *httpserver.Server,
+	httpSrv *httpserver.Server,
+	grpcSrv *grpcserver.Server,
 ) []app.Component {
-	return []app.Component{logger, db, migrator, srv}
+	return []app.Component{logger, db, migrator, httpSrv, grpcSrv}
 }
 
 func main() {

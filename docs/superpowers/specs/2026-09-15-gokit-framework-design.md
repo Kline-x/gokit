@@ -293,11 +293,11 @@ go install github.com/Kline-x/gokit/cmd/gokit@latest
 
 每一步产出可运行成果：
 
-1. 升级 Go 到 1.22+（Windows 现 1.19、WSL 现 1.21），建仓库，配置 CI。
-2. 内核：`app`（Component / App / 生命周期）+ `config` + `component/log`，配完整单测。
-3. 组件：`httpserver`、`sqldb`，跑通最小可用单体。
-4. 组件：`grpcserver`、`grpcclient`，跑通同一个 Service 双协议暴露。
-5. `transport`：错误码 + 统一响应。
+1. 升级 Go 到 1.22+（Windows 现 1.19、WSL 现 1.21），建仓库，配置 CI。（已完成，见 `docs/superpowers/plans/2026-09-15-gokit-kernel-and-core-components.md`）
+2. 内核：`app`（Component / App / 生命周期）+ `config` + `component/log`，配完整单测。（已完成，见 `docs/superpowers/plans/2026-09-15-gokit-kernel-and-core-components.md`）
+3. 组件：`httpserver`、`sqldb`，跑通最小可用单体。（已完成，见 `docs/superpowers/plans/2026-09-15-gokit-kernel-and-core-components.md`）
+4. 组件：`grpcserver`、`grpcclient`，跑通同一个 Service 双协议暴露。（已完成，见 `docs/superpowers/plans/2026-09-16-transport-and-grpc.md`）
+5. `transport`：错误码 + 统一响应。（已完成，见 `docs/superpowers/plans/2026-09-16-transport-and-grpc.md`）
 6. 脚手架 CLI + 模板 + 示例模块。
 7. 拆分演示：把示例模块从单体切到独立进程，只改 `wire.go`，过程写成文档。
 8. 可选组件：`redis`、`cron`、`eventbus`。

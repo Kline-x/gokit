@@ -45,12 +45,17 @@ func initApp(cfg Config) (*Bundle, error) {
 	httpHandler := interfaces.NewHTTPHandler(localService)
 	handler := provideHandler(logger, httpHandler)
 	server := provideHTTPServer(httpserverConfig, handler, app)
+	grpcserverConfig := provideGRPCConfig(cfg)
+	grpcHandler := interfaces.NewGRPCHandler(localService)
+	v := provideServiceRegistrars(grpcHandler)
+	grpcserverServer := provideGRPCServer(grpcserverConfig, v, logger, app)
 	migrator := infrastructure.NewMigrator(db)
-	v := provideComponents(logger, db, migrator, server)
+	v2 := provideComponents(logger, db, migrator, server, grpcserverServer)
 	bundle := &Bundle{
 		App:        app,
 		HTTP:       server,
-		Components: v,
+		GRPC:       grpcserverServer,
+		Components: v2,
 	}
 	return bundle, nil
 }

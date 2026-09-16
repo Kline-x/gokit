@@ -31,4 +31,5 @@ var LocalSet = wire.NewSet(
 	wire.Bind(new(application.Service), new(*application.LocalService)),
 
 	interfaces.NewHTTPHandler,
+	interfaces.NewGRPCHandler,
 )

@@ -30,7 +30,7 @@
    - `config` 只允许 `gopkg.in/yaml.v3`。
    - 各组件包只允许其直接对应的客户端库，加 `github.com/google/wire`。`grpcserver` 与 `grpcclient` 可以用 `google.golang.org/grpc` 与 `google.golang.org/protobuf`。
    - 任何组件都不得 import `app`，按方法集结构性地满足生命周期契约。
-5. **组件之间互不依赖**，例外有两条：`component/log` 是横切关注点，谁都可以 import；本计划新增第二条例外 —— `component/grpcserver` 与 `component/grpcclient` 可以 import `transport`，因为错误语义本身就是通信契约的一部分。
+5. **组件之间互不依赖**，例外有两条：`component/log` 是横切关注点，谁都可以 import；**任何组件都可以 import `transport`** —— 它不是组件，是通信契约层，错误语义与响应形状本来就属于协议边界。（原先只对两个 gRPC 组件开这个口子，后来发现 `httpserver` 的 recover 与超时响应不走统一信封会让客户端 SDK 解码失败，于是推广成通则。`transport` 只依赖标准库，开这个口子不引入任何额外依赖。）
 6. **文档、目录名、注释、提交信息中不出现 "DDD" 字样**，统一说「分层」「领域模型」。
 7. **注释与提交信息用中文**。提交用 `git -c user.name=xuyang -c user.email=xuyang@89you.com commit`，信息末尾加一行 `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`。**这行是字面文本，执行者不要换成自己的模型名。**
 8. **配置结构体只用值类型字段，不用指针字段**，且第一个字段是 `Name string \`yaml:"name"\``，默认值取组件名。`config.Validate` 会在 `Load` 时拒绝指针字段与展开后无可寻址叶子的结构体字段。
@@ -332,9 +332,13 @@ func (e *Error) Error() string {
 // Is 让 errors.Is 按 Code 与 Reason 匹配，与 Message、Metadata 无关。
 //
 // 这样业务可以定义一个不带描述的哨兵错误，用它去匹配任何同类错误。
+//
+// 这里对 target 做直接类型断言而不是 errors.As：拆解调用方那条错误链
+// 是 errors.Is 自己的职责，如果这里再去拆 target，那么「target 只是
+// 包装了一个 Error」也会被误判成匹配。
 func (e *Error) Is(target error) bool {
-	var t *Error
-	if !errors.As(target, &t) {
+	t, ok := target.(*Error)
+	if !ok {
 		return false
 	}
 	return e.Code == t.Code && e.Reason == t.Reason
@@ -509,7 +513,7 @@ package transport
 
 import "errors"
 
-// 框架的错误码表。取值刻意与 HTTP 状态码对齐，方便直觉理解；
+// 框架的错误码表。取值大体沿用 HTTP 状态码，方便一眼看懂；
 // 映射到 gRPC status 的规则在 component/grpcserver 里。
 const (
 	// CodeOK 表示没有错误。
@@ -899,11 +903,15 @@ git commit -m "通信：HTTP 统一响应与错误码到状态码的映射"
 - Consumes: 无
 - Produces: `make tools` 能装好两个 protoc 插件；`make proto` 能把示例的 proto 生成到位
 
-- [ ] **Step 1: 引入依赖**
+- [ ] **Step 1: 引入依赖（版本必须锁定，不要用 @latest）**
 
 ```bash
-wsl -u gaore bash -lc 'cd /mnt/e/code/AI/vibCoding/gokit && /home/gaore/sdk/go/bin/go get google.golang.org/grpc && /home/gaore/sdk/go/bin/go get google.golang.org/protobuf && /home/gaore/sdk/go/bin/go mod tidy'
+wsl -u gaore bash -lc 'cd /mnt/e/code/AI/vibCoding/gokit && /home/gaore/sdk/go/bin/go get google.golang.org/grpc@v1.65.0 && /home/gaore/sdk/go/bin/go get google.golang.org/protobuf@v1.35.2 && /home/gaore/sdk/go/bin/go mod tidy'
 ```
+
+**为什么锁版本**：`grpc@latest`（v1.83 一线）自身的 `go` 指令是 1.25，一旦引入就会把本模块的 `go 1.22` 顶上去，而降低版本下限正是上一版评审专门修过的事。v1.65.0 与 v1.35.2 只要求 go1.21，且已包含本计划用到的全部 API（`grpc.NewClient` 自 v1.63 起提供）。
+
+这只是**下限**：消费者的项目想用更新的 grpc，自己 require 即可，Go 的最小版本选择会选高的那个。锁低反而保住了兼容面。后续任何任务再引入这两个依赖时，一律带上同样的版本号。
 
 - [ ] **Step 2: 安装 protoc 插件**
 
@@ -2096,10 +2104,32 @@ func ErrorRestorer() grpc.UnaryClientInterceptor {
 	}
 }
 
-// splitReason 从 "REASON: 描述" 中拆出两段。没有冒号时整段都是描述。
+// looksLikeReason 判断一段文本像不像机器可读的 Reason。
+//
+// 按约定 Reason 由大写字母、数字与下划线组成，例如 USER_NOT_FOUND。
+// 之所以要这道闸：gRPC 自己产生的错误文本里也常带冒号，
+// 比如建连失败时的「last connection error: connection refused」。
+// 不加限制地按第一个冒号拆，就会把「last connection error」当成 Reason
+// 交给调用方去分支判断，而那根本不是业务语义。
+func looksLikeReason(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// splitReason 从 "REASON: 描述" 中拆出两段。
+// 拆不出、或前半段不像 Reason 时，整段都当描述，Reason 留空。
 func splitReason(msg string) (reason, message string) {
 	before, after, found := strings.Cut(msg, ": ")
-	if !found {
+	if !found || !looksLikeReason(before) {
 		return "", msg
 	}
 	return before, after
