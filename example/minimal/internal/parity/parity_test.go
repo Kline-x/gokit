@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,8 +26,18 @@ import (
 	"github.com/Kline-x/gokit/transport"
 )
 
+// fixture 是一次对等检查需要的全部东西：一个 Service，以及它背后的库。
+//
+// 拿着库是为了能验证「东西确实写进去了、确实是读出来的」——
+// 没有它，断言只能看 Greet 的返回值，而返回值是名字的纯函数，
+// 就算写库整个坏掉也看不出来。
+type fixture struct {
+	svc application.Service
+	db  *sqldb.DB
+}
+
 // newLocalService 造一个本地实现，连一个独立的内存库。
-func newLocalService(t *testing.T, dsn string) (application.Service, *sqldb.DB) {
+func newLocalService(t *testing.T, dsn string) fixture {
 	t.Helper()
 
 	cfg := sqldb.DefaultConfig()
@@ -48,18 +59,21 @@ func newLocalService(t *testing.T, dsn string) (application.Service, *sqldb.DB) 
 	}
 
 	repo := infrastructure.NewGreetingRepo(db)
-	return application.NewLocalService(repo, db), db
+	return fixture{svc: application.NewLocalService(repo, db), db: db}
 }
 
 // newRemoteService 起一个真的 gRPC 服务，再造一个连过去的远程实现。
-func newRemoteService(t *testing.T, dsn string) application.Service {
+//
+// db 是服务端那份库的句柄：对 remote 调用方来说库藏在另一个进程里，
+// 但测试跑在同一个进程内，可以直接拿到它，用来验证写没写进去。
+func newRemoteService(t *testing.T, dsn string) fixture {
 	t.Helper()
 
-	local, _ := newLocalService(t, dsn)
+	local := newLocalService(t, dsn)
 
 	srv := grpcserver.New(
 		grpcserver.Config{Name: "grpcserver.parity", Addr: "127.0.0.1:0"},
-		[]grpcserver.ServiceRegistrar{interfaces.NewGRPCHandler(local)},
+		[]grpcserver.ServiceRegistrar{interfaces.NewGRPCHandler(local.svc)},
 		grpcserver.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
 
@@ -86,7 +100,7 @@ func newRemoteService(t *testing.T, dsn string) application.Service {
 	}
 	t.Cleanup(func() { _ = client.Stop(ctx) })
 
-	return remote.NewService(client)
+	return fixture{svc: remote.NewService(client), db: local.db}
 }
 
 // TestServiceBehavesIdenticallyLocalAndRemote 是本计划存在的理由。
@@ -96,14 +110,11 @@ func newRemoteService(t *testing.T, dsn string) application.Service {
 func TestServiceBehavesIdenticallyLocalAndRemote(t *testing.T) {
 	cases := []struct {
 		name string
-		make func(t *testing.T, dsn string) application.Service
+		make func(t *testing.T, dsn string) fixture
 	}{
 		{
 			name: "local",
-			make: func(t *testing.T, dsn string) application.Service {
-				svc, _ := newLocalService(t, dsn)
-				return svc
-			},
+			make: newLocalService,
 		},
 		{
 			name: "remote",
@@ -113,10 +124,11 @@ func TestServiceBehavesIdenticallyLocalAndRemote(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := tc.make(t, "file:parity_"+tc.name+"?mode=memory&cache=shared")
+			f := tc.make(t, "file:parity_"+tc.name+"?mode=memory&cache=shared")
+			svc := f.svc
 			ctx := context.Background()
 
-			// 一、正常路径：两次调用应当返回同一份结果。
+			// 一、正常路径：按公式生成的问候语要对。
 			first, err := svc.Greet(ctx, application.GreetRequest{Name: "gokit"})
 			if err != nil {
 				t.Fatalf("Greet() error = %v", err)
@@ -125,15 +137,47 @@ func TestServiceBehavesIdenticallyLocalAndRemote(t *testing.T) {
 				t.Errorf("Text = %q, want %q", first.Text, "你好，gokit")
 			}
 
-			second, err := svc.Greet(ctx, application.GreetRequest{Name: "gokit"})
-			if err != nil {
-				t.Fatalf("第二次 Greet() error = %v", err)
-			}
-			if second.Text != first.Text {
-				t.Errorf("两次结果不一致: %q vs %q", first.Text, second.Text)
+			// 二、读路径：先直接往库里塞一条与公式不同的记录，再问同一个名字。
+			// 必须拿到塞进去的那条，而不是按公式现算的 ——
+			// 这才证明它真的去读了存储。
+			const presetName = "preset"
+			const presetText = "这是预置的问候语，不是算出来的"
+			if _, execErr := f.db.ExecContext(ctx,
+				`INSERT INTO greetings(name, text) VALUES(?, ?)`,
+				presetName, presetText); execErr != nil {
+				t.Fatalf("预置记录失败: %v", execErr)
 			}
 
-			// 二、错误路径：判断错误的写法两边必须完全一样。
+			preset, err := svc.Greet(ctx, application.GreetRequest{Name: presetName})
+			if err != nil {
+				t.Fatalf("Greet(preset) error = %v", err)
+			}
+			if preset.Text != presetText {
+				t.Errorf("Text = %q, want %q（应当读存储里的那条，而不是按公式现算）",
+					preset.Text, presetText)
+			}
+
+			// 三、写路径：换个新名字问两次，库里只该有一条。
+			// 第一次写入、第二次命中已有记录，都要真的发生。
+			const freshName = "fresh"
+			for i := 0; i < 2; i++ {
+				if _, err := svc.Greet(ctx, application.GreetRequest{Name: freshName}); err != nil {
+					t.Fatalf("第 %d 次 Greet(fresh) error = %v", i+1, err)
+				}
+			}
+
+			var count int
+			row := f.db.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM greetings WHERE name = ?`, freshName)
+			if err := row.Scan(&count); err != nil {
+				t.Fatalf("统计失败: %v", err)
+			}
+			if count != 1 {
+				t.Errorf("greetings 里 %q 有 %d 条, want 1（第一次要写进去，第二次不该重复写）",
+					freshName, count)
+			}
+
+			// 四、错误路径：判断错误的写法两边必须完全一样。
 			// 这里用的哨兵只带 Code 与 Reason，不带描述 ——
 			// transport.Error 的 Is 正是按这两项匹配的。
 			sentinel := transport.InvalidArgument("NAME_REQUIRED", "")
@@ -149,13 +193,34 @@ func TestServiceBehavesIdenticallyLocalAndRemote(t *testing.T) {
 				t.Errorf("Code = %d, want %d", got, transport.CodeInvalidArgument)
 			}
 
-			// 三、错误里的结构化信息也要过得去。
+			// 错误里的结构化信息也要过得去。
 			var te *transport.Error
 			if !errors.As(err, &te) {
 				t.Fatalf("取不出 *transport.Error: %v", err)
 			}
 			if te.Metadata["field"] != "name" {
 				t.Errorf("Metadata = %v, want field=name", te.Metadata)
+			}
+
+			// 五、内部故障不能把底层细节带给调用方。
+			// 关掉库，再问一次：应当拿到内部错误码与一句泛化描述，
+			// 而不是驱动或 SQL 的原文。这一条在本地与远程两边都必须成立 ——
+			// 远程那边尤其要紧，因为泄漏出去的是给外部客户端看的。
+			if err := f.db.Stop(ctx); err != nil {
+				t.Fatalf("关闭数据库失败: %v", err)
+			}
+
+			_, err = svc.Greet(ctx, application.GreetRequest{Name: "afterclose"})
+			if err == nil {
+				t.Fatal("库已经关了，Greet 不该成功")
+			}
+			if got := transport.Code(err); got != transport.CodeInternal {
+				t.Errorf("Code = %d, want %d", got, transport.CodeInternal)
+			}
+			for _, leak := range []string{"sql", "database", "greetings", "SELECT", "INSERT"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("错误里漏出了底层细节 %q: %v", leak, err)
+				}
 			}
 		})
 	}
