@@ -121,3 +121,30 @@ func TestHTTPStatusFallsBackToInternal(t *testing.T) {
 		t.Errorf("HTTPStatus(CodeOK) = %d, want 200", got)
 	}
 }
+
+func TestHTTPStatusCoversEveryCode(t *testing.T) {
+	// 这张表是框架对外的 HTTP 契约，任何一行写错都会静默地传播到
+	// 所有基于本框架的服务，所以逐条钉住，而不是抽查几条。
+	cases := []struct {
+		code int
+		want int
+	}{
+		{CodeOK, http.StatusOK},
+		{CodeInvalidArgument, http.StatusBadRequest},
+		{CodeUnauthenticated, http.StatusUnauthorized},
+		{CodePermissionDenied, http.StatusForbidden},
+		{CodeNotFound, http.StatusNotFound},
+		{CodeAlreadyExists, http.StatusConflict},
+		{CodeFailedPrecondition, http.StatusUnprocessableEntity},
+		{CodeRateLimited, http.StatusTooManyRequests},
+		{CodeInternal, http.StatusInternalServerError},
+		{CodeUnavailable, http.StatusServiceUnavailable},
+		{CodeTimeout, http.StatusGatewayTimeout},
+	}
+
+	for _, tc := range cases {
+		if got := HTTPStatus(tc.code); got != tc.want {
+			t.Errorf("HTTPStatus(%d) = %d, want %d", tc.code, got, tc.want)
+		}
+	}
+}

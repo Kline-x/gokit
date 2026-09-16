@@ -49,6 +49,10 @@ func HTTPStatus(code int) int {
 }
 
 // Render 写出一个成功响应。
+//
+// 返回的 error 只够用来记日志，不足以补救：状态码与响应头在编码之前
+// 就已经写出去了，此刻没有任何办法改写它们。调用方拿到它应当记一条日志，
+// 而不是试图再渲染一次。
 func Render(w http.ResponseWriter, data any) error {
 	return write(w, http.StatusOK, Response{Code: CodeOK, Data: data})
 }
@@ -57,6 +61,10 @@ func Render(w http.ResponseWriter, data any) error {
 //
 // 任何 error 都能传进来：不是 *Error 的会被归一成内部错误。
 // 错误的 cause 只服务于进程内的 errors.Is，不会出现在响应体里。
+//
+// 返回的 error 只够用来记日志，不足以补救：状态码与响应头在编码之前
+// 就已经写出去了，此刻没有任何办法改写它们。调用方拿到它应当记一条日志，
+// 而不是试图再渲染一次。
 func RenderError(w http.ResponseWriter, err error) error {
 	e := FromError(err)
 	if e == nil {
@@ -70,6 +78,8 @@ func RenderError(w http.ResponseWriter, err error) error {
 	})
 }
 
+// write 落盘一个响应。注意写出顺序：先定头、再写状态码、最后编码正文，
+// 因此编码阶段的失败已经无法回退状态码，只能原样返回给调用方去记日志。
 func write(w http.ResponseWriter, status int, body Response) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
