@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -54,15 +55,24 @@ func ErrorMapper() grpc.UnaryServerInterceptor {
 			return resp, nil
 		}
 
-		// status.FromError 只对 nil、*status.Error，以及实现了 GRPCStatus()
-		// 的类型返回 true。transport.Error 不实现它，普通 error 也不实现，
-		// 所以这一句足以把「已经是 status」的错误挑出来原样放行。
-		if _, ok := status.FromError(err); ok {
-			return resp, err
+		// 先问「是不是框架错误」，再问「是不是已经成型的 status」。顺序不能反：
+		// grpc 的 status.FromError 会用 errors.As 匹配任何「包装了 status」的错误，
+		// 而中转下游调用时，grpcclient 还原出来的 transport.Error 正好把原始 status
+		// 挂在 cause 上。若先问 status.FromError，这类错误会被原样放行，
+		// 于是 Reason 丢失、Error() 的完整内容（连同 cause）被发给外部客户端。
+		var te *transport.Error
+		if !errors.As(err, &te) {
+			// 不是框架错误：已经是 status 的原样放行，其余归一成内部错误。
+			if _, ok := status.FromError(err); ok {
+				return resp, err
+			}
+			te = transport.FromError(err)
 		}
 
-		e := transport.FromError(err)
-		return resp, status.Error(GRPCCode(e.Code), fmt.Sprintf("%s: %s", e.Reason, e.Message))
+		return resp, status.Error(
+			GRPCCode(te.StatusCode()),
+			fmt.Sprintf("%s: %s", te.Reason, te.Message),
+		)
 	}
 }
 

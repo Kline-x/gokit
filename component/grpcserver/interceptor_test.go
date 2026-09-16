@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -135,6 +136,76 @@ func TestRequestLogInjectsLoggerIntoContext(t *testing.T) {
 	}
 	if !injected {
 		t.Error("处理函数未能从 ctx 取到注入的 logger")
+	}
+}
+
+func TestErrorMapperTranslatesRelayedDownstreamError(t *testing.T) {
+	// 中转场景：本服务把下游返回的错误原样往上抛。grpcclient 还原出来的
+	// transport.Error 会把原始 status 挂在 cause 上，而 grpc 的 status.FromError
+	// 会用 errors.As 认出它——必须先按框架错误翻译，否则 Reason 会丢、
+	// 内部细节会漏给外部客户端。
+	downstream := status.Error(codes.NotFound, "USER_NOT_FOUND: 用户不存在")
+	relayed := transport.NotFound("USER_NOT_FOUND", "用户不存在").WithCause(downstream)
+
+	_, err := ErrorMapper()(context.Background(), nil, unaryInfo(),
+		func(context.Context, any) (any, error) { return nil, relayed })
+
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("返回的不是 gRPC status: %v", err)
+	}
+	if st.Code() != codes.NotFound {
+		t.Errorf("code = %v, want NotFound", st.Code())
+	}
+	if st.Message() != "USER_NOT_FOUND: 用户不存在" {
+		t.Errorf("message = %q，应当是重新翻译出来的，而不是原样放行的 Error() 内容", st.Message())
+	}
+	if strings.Contains(st.Message(), "cause=") {
+		t.Errorf("message 里漏出了 cause：%q", st.Message())
+	}
+}
+
+func TestErrorMapperTranslatesWrappedTransportError(t *testing.T) {
+	// 业务层常用 fmt.Errorf 给错误加上下文，包装之后仍应被正确翻译。
+	wrapped := fmt.Errorf("查询用户失败: %w", transport.NotFound("USER_NOT_FOUND", "用户不存在"))
+
+	_, err := ErrorMapper()(context.Background(), nil, unaryInfo(),
+		func(context.Context, any) (any, error) { return nil, wrapped })
+
+	st, _ := status.FromError(err)
+	if st.Code() != codes.NotFound {
+		t.Errorf("code = %v, want NotFound", st.Code())
+	}
+	if st.Message() != "USER_NOT_FOUND: 用户不存在" {
+		t.Errorf("message = %q", st.Message())
+	}
+}
+
+func TestErrorMapperTranslatesJoinedTransportError(t *testing.T) {
+	joined := errors.Join(errors.New("上下文"), transport.NotFound("USER_NOT_FOUND", "用户不存在"))
+
+	_, err := ErrorMapper()(context.Background(), nil, unaryInfo(),
+		func(context.Context, any) (any, error) { return nil, joined })
+
+	st, _ := status.FromError(err)
+	if st.Code() != codes.NotFound {
+		t.Errorf("code = %v, want NotFound", st.Code())
+	}
+}
+
+func TestErrorMapperTreatsZeroCodeAsInternal(t *testing.T) {
+	// 带 CodeOK 的错误若原样映射，status.Error(codes.OK, ...) 会返回 nil，
+	// 错误被整个吞掉，客户端收到一个空的成功响应。
+	zero := &transport.Error{Reason: "USER_NOT_FOUND", Message: "用户不存在"}
+
+	_, err := ErrorMapper()(context.Background(), nil, unaryInfo(),
+		func(context.Context, any) (any, error) { return nil, zero })
+
+	if err == nil {
+		t.Fatal("错误被吞成了 nil，客户端会以为调用成功")
+	}
+	if got := status.Code(err); got != codes.Internal {
+		t.Errorf("code = %v, want Internal", got)
 	}
 }
 

@@ -70,8 +70,9 @@ func RenderError(w http.ResponseWriter, err error) error {
 	if e == nil {
 		return Render(w, nil)
 	}
-	return write(w, HTTPStatus(e.Code), Response{
-		Code:     e.Code,
+	code := e.StatusCode()
+	return write(w, HTTPStatus(code), Response{
+		Code:     code,
 		Reason:   e.Reason,
 		Message:  e.Message,
 		Metadata: e.Metadata,

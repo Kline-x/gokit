@@ -66,6 +66,19 @@ func (e *Error) Is(target error) bool {
 // Unwrap 让 errors.Is / errors.As 能穿透到底层原因。
 func (e *Error) Unwrap() error { return e.cause }
 
+// StatusCode 返回在协议边界上应当使用的错误码。
+//
+// 它与 Code 字段几乎总是一致，唯一的例外是 Code 为 CodeOK：一个走到错误路径
+// 的错误却带着「成功」码，多半是用复合字面量构造时漏填了 Code。若原样发出去，
+// HTTP 会回 200、gRPC 会把错误吞成 nil，调用方收到一个「成功但空」的响应，
+// 比直接报错难查得多，所以这里强制归为内部错误。
+func (e *Error) StatusCode() int {
+	if e.Code == CodeOK {
+		return CodeInternal
+	}
+	return e.Code
+}
+
 // WithMetadata 返回一个带上补充信息的副本，不改动原错误。
 func (e *Error) WithMetadata(kv map[string]string) *Error {
 	out := e.clone()

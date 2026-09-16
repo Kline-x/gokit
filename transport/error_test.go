@@ -132,6 +132,15 @@ func TestErrorIsStillMatchesWhenReceiverIsWrapped(t *testing.T) {
 	}
 }
 
+func TestStatusCodeCoercesOKButLeavesOthers(t *testing.T) {
+	if got := (&Error{}).StatusCode(); got != CodeInternal {
+		t.Errorf("零码的 StatusCode() = %d, want %d", got, CodeInternal)
+	}
+	if got := NotFound("X", "y").StatusCode(); got != CodeNotFound {
+		t.Errorf("StatusCode() = %d, want %d（非零码应原样返回）", got, CodeNotFound)
+	}
+}
+
 func TestFromErrorDoesNotLeakUnknownErrorText(t *testing.T) {
 	// Message 是客户端可见的，底层错误原文不能进去。
 	plain := errors.New("dial tcp 10.0.0.1:3306: connect: connection refused")

@@ -113,6 +113,29 @@ func TestRenderErrorHidesInternalCause(t *testing.T) {
 	}
 }
 
+func TestRenderErrorTreatsZeroCodeAsInternal(t *testing.T) {
+	// 复合字面量漏填 Code 是很容易犯的错。若按 CodeOK 发出去，
+	// 客户端会收到 200 加一个空 data，比直接报错难查得多。
+	err := &Error{Reason: "USER_NOT_FOUND", Message: "用户不存在"}
+
+	rec := httptest.NewRecorder()
+	if renderErr := RenderError(rec, err); renderErr != nil {
+		t.Fatalf("RenderError() error = %v", renderErr)
+	}
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500（错误路径上的零码应归为内部错误）", rec.Code)
+	}
+
+	var body map[string]any
+	if jsonErr := json.Unmarshal(rec.Body.Bytes(), &body); jsonErr != nil {
+		t.Fatalf("响应不是合法 JSON: %v", jsonErr)
+	}
+	if body["code"] != float64(CodeInternal) {
+		t.Errorf("code = %v, want %d", body["code"], CodeInternal)
+	}
+}
+
 func TestHTTPStatusFallsBackToInternal(t *testing.T) {
 	if got := HTTPStatus(9999); got != http.StatusInternalServerError {
 		t.Errorf("HTTPStatus(9999) = %d, want 500", got)
