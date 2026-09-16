@@ -62,7 +62,7 @@ func New(cfg Config) (*Logger, error) {
 
 	lv := new(slog.LevelVar)
 	if err := parseLevel(cfg.Level, lv); err != nil {
-		return nil, fmt.Errorf("log: %s %w", cfg.Name, err)
+		return nil, err
 	}
 
 	w, closer, err := openOutput(cfg.Name, cfg.Output)
