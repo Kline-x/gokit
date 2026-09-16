@@ -30,16 +30,20 @@ type Config struct {
 	// 0 表示使用默认值；本组件不支持 sqldb 那样的 -1 哨兵。
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 	// EnableReflection 决定是否开启反射服务，便于用 grpcurl 之类的工具调试。
+	//
+	// 默认关闭：反射会把完整的服务描述暴露给任何能连上这个端口的人。
+	// 开发与测试环境按需在配置里打开。注意 withDefaults 无法为布尔字段
+	// 还原默认值——false 既是「没设」也是「显式关掉」——所以这个字段
+	// 的默认值只能是 false，不能靠 DefaultConfig 把它设成 true。
 	EnableReflection bool `yaml:"enable_reflection"`
 }
 
 // DefaultConfig 返回一组可直接使用的默认值。
 func DefaultConfig() Config {
 	return Config{
-		Name:             "grpcserver",
-		Addr:             ":9000",
-		ShutdownTimeout:  10 * time.Second,
-		EnableReflection: true,
+		Name:            "grpcserver",
+		Addr:            ":9000",
+		ShutdownTimeout: 10 * time.Second,
 	}
 }
 

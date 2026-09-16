@@ -30,6 +30,12 @@ var transportByCode = map[codes.Code]int{
 
 // TransportCode 返回 gRPC status code 对应的框架错误码。
 // 表外的取值一律按内部错误处理。
+//
+// 表外的 gRPC 码一律归为内部错误，其中有几个值得留意：codes.Canceled
+// （调用方自己挂断）、codes.Unimplemented（方法不存在）与 codes.Aborted
+// 都会被算成内部错误，因此以错误码为维度的监控会把它们和真正的服务端故障
+// 混在一起。需要区分时，用 status.Code(errors.Unwrap(err)) 取回原始的 gRPC 码 ——
+// ErrorRestorer 把它挂在 cause 上了。
 func TransportCode(c codes.Code) int {
 	if code, ok := transportByCode[c]; ok {
 		return code

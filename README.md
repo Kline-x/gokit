@@ -77,7 +77,7 @@ func main() {
 
 ## 更多
 
-- 完整可运行示例：`example/minimal`（分层的问候模块，HTTP 暴露，数据落 SQLite）。
+- 完整可运行示例：`example/minimal`（分层的问候模块，同一套服务同时通过 HTTP 与 gRPC 对外提供，数据落 SQLite）。
 - 设计文档：`docs/superpowers/specs/2026-09-15-gokit-framework-design.md`。
 
 ## 本版不包含

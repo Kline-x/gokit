@@ -1,5 +1,5 @@
 // Command minimal 是 gokit 的最小可用单体示例：
-// 一个分层的问候模块，通过 HTTP 暴露，数据落在 SQLite。
+// 一个分层的问候模块，同一套服务同时通过 HTTP 与 gRPC 对外提供，数据落在 SQLite。
 package main
 
 import (

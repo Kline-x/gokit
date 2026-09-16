@@ -48,7 +48,9 @@ func TestClientConnectsAndReportsHealthy(t *testing.T) {
 	}
 }
 
-func TestClientHealthFailsWhenServerGone(t *testing.T) {
+// TestClientHealthFailsAfterStop 验证 Stop 之后连接已真正关闭：
+// 此时不是服务端消失，而是客户端自己主动停止了连接。
+func TestClientHealthFailsAfterStop(t *testing.T) {
 	addr := startTestServer(t)
 
 	c, err := New(Config{Name: "grpcclient.test", Target: addr})
