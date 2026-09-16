@@ -15,6 +15,9 @@ import (
 func TestGreetEndToEnd(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.HTTP.Addr = "127.0.0.1:0"
+	// 内存库靠 cache=shared 在连接之间共享，只要连接池里还有活连接就不会消失。
+	// 这依赖 sqldb 默认的 MaxIdleConns 大于 0——若把空闲连接数调成 0，
+	// Migrate 用完的连接会被立刻关掉，后续请求将看不到这张表。
 	cfg.DB.DSN = "file:e2e?mode=memory&cache=shared"
 	cfg.Log.Output = filepath.Join(t.TempDir(), "app.log")
 
