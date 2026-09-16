@@ -201,6 +201,12 @@ func TestTimeoutReturns503ForSlowHandler(t *testing.T) {
 	}
 }
 
+// plainReader 只暴露 Read，挡住 io.Copy 的 WriterTo 快路径，
+// 好让拷贝真正落到目的地的 ReadFrom 上。
+type plainReader struct{ r io.Reader }
+
+func (p plainReader) Read(b []byte) (int, error) { return p.r.Read(b) }
+
 // notReaderFrom 只实现 http.ResponseWriter，用来逼出 ReadFrom 的退化路径。
 type notReaderFrom struct{ http.ResponseWriter }
 
@@ -210,7 +216,7 @@ func TestReadFromCountsBytesOnFallbackPath(t *testing.T) {
 
 	payload := strings.Repeat("x", 4096)
 	h := RequestLog(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if _, err := io.Copy(w, strings.NewReader(payload)); err != nil {
+		if _, err := io.Copy(w, plainReader{r: strings.NewReader(payload)}); err != nil {
 			t.Errorf("io.Copy() error = %v", err)
 		}
 	}))
