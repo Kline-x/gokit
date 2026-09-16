@@ -11,6 +11,7 @@ import (
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/domain"
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/infrastructure"
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/interfaces"
+	"github.com/Kline-x/gokit/example/minimal/internal/greeter/remote"
 )
 
 // LocalSet 是单体部署下的装配集合：Service 绑定到进程内实现。
@@ -32,4 +33,20 @@ var LocalSet = wire.NewSet(
 
 	interfaces.NewHTTPHandler,
 	interfaces.NewGRPCHandler,
+)
+
+// RemoteSet 是模块拆成独立服务后，**调用方**使用的装配集合。
+//
+// 它把 application.Service 绑到 gRPC 客户端实现上。与 LocalSet 相比：
+// 不需要仓储、不需要迁移、不需要数据库，因为那些都跟着服务走了；
+// 也不需要 gRPC 接口层，因为调用方不对外提供这个服务。
+// 需要的只有一条到下游的连接，由调用方在组合根里提供。
+//
+// 换掉 LocalSet 这件事，对 domain、application、interfaces 三层完全不可见——
+// 这正是这套分层想换来的东西。
+var RemoteSet = wire.NewSet(
+	remote.NewService,
+	wire.Bind(new(application.Service), new(*remote.Service)),
+
+	interfaces.NewHTTPHandler,
 )
