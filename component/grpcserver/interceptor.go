@@ -47,7 +47,7 @@ func GRPCCode(code int) codes.Code {
 //
 // status 的 message 里带上 Reason，形如 "USER_NOT_FOUND: 用户不存在"，
 // 这样客户端侧的拦截器能把它还原回 transport.Error，跨进程后语义不丢。
-// 已经是 gRPC status 的错误原样放行，不做二次包装。
+// 先按框架错误翻译，只有确实不是 transport.Error 且本身已经是 status 的才原样放行。
 func ErrorMapper() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler) (any, error) {

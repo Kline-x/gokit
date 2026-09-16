@@ -82,8 +82,25 @@ func WithFatal(fn func(error)) Option {
 //
 // 默认装上的 Recover 与 ErrorMapper 始终在最内层，这里传入的拦截器
 // 只会包在它们外面。
+//
+// 这些拦截器运行在 ErrorMapper **之外**，因此看到的是已经翻译过的 status ——
+// RequestLog 正需要这样。反过来，若你的拦截器自己会返回 transport.Error
+// （鉴权、配额等在 handler 之前就拒绝请求的场景），要用 WithInnerUnaryInterceptor，
+// 否则那个错误不会被翻译。
 func WithUnaryInterceptor(is ...grpc.UnaryServerInterceptor) Option {
 	return func(s *Server) { s.unary = append(s.unary, is...) }
+}
+
+// WithInnerUnaryInterceptor 追加**内层**一元拦截器，它们运行在 ErrorMapper 之内，
+// 因此返回的 transport.Error 会被正常翻译成 status。
+//
+// 鉴权、配额这类「在 handler 之前就可能拒绝请求」的拦截器应当用这个，
+// 否则它们返回的框架错误绕过了 ErrorMapper，会以 Unknown 加完整 Error()
+// 内容（含 cause）抵达客户端。
+// 只关心观测的拦截器（例如 RequestLog）用 WithUnaryInterceptor，
+// 那样它才看得到已经翻译过的状态码。
+func WithInnerUnaryInterceptor(is ...grpc.UnaryServerInterceptor) Option {
+	return func(s *Server) { s.innerUnary = append(s.innerUnary, is...) }
 }
 
 // WithLogger 替换本组件默认拦截器使用的日志器。不设时取 slog.Default()。
@@ -107,10 +124,11 @@ func WithoutDefaultInterceptors() Option {
 
 // Server 是实现了 app.Component 方法集的 gRPC 服务。
 type Server struct {
-	cfg      Config
-	services []ServiceRegistrar
-	unary    []grpc.UnaryServerInterceptor
-	onFatal  func(error)
+	cfg        Config
+	services   []ServiceRegistrar
+	unary      []grpc.UnaryServerInterceptor
+	innerUnary []grpc.UnaryServerInterceptor
+	onFatal    func(error)
 
 	logger          *slog.Logger
 	withoutDefaults bool
@@ -152,14 +170,14 @@ func (s *Server) Start(context.Context) error {
 		return fmt.Errorf("grpcserver: %s 监听 %s 失败: %w", s.cfg.Name, s.cfg.Addr, err)
 	}
 
-	// 默认拦截器放在最内层：使用方通过 WithUnaryInterceptor 传进来的
-	// 只会包在外面，因此 RequestLog 这类需要看到已翻译状态码的拦截器
-	// 天然处在正确的位置。
-	unary := s.unary
+	// 顺序：调用方的外层拦截器 → Recover → ErrorMapper → 调用方的内层拦截器 → handler。
+	// ErrorMapper 必须包在内层拦截器**外面**，否则一个在 handler 之前就拒绝请求的
+	// 拦截器（鉴权、配额之类）返回的框架错误会绕过翻译，以 Unknown 加完整 cause 发出去。
+	unary := append([]grpc.UnaryServerInterceptor{}, s.unary...)
 	if !s.withoutDefaults {
-		unary = append(append([]grpc.UnaryServerInterceptor{}, s.unary...),
-			Recover(s.logger), ErrorMapper())
+		unary = append(unary, Recover(s.logger), ErrorMapper())
 	}
+	unary = append(unary, s.innerUnary...)
 	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(unary...))
 	for _, svc := range s.services {
 		svc.Register(srv)

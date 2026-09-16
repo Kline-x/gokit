@@ -298,6 +298,27 @@ func TestRecoverWritesEnvelope(t *testing.T) {
 	}
 }
 
+func TestRecoverDoesNotAppendToPartialBody(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	h := Recover(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"text":"hi`))
+		panic("boom")
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
+
+	body := rec.Body.String()
+	if strings.Contains(body, `"reason":"PANIC"`) {
+		t.Errorf("响应已经写了一半，不该再追加错误信封，实际 body=%q", body)
+	}
+	if !strings.Contains(buf.String(), "boom") {
+		t.Error("日志里没有 panic 内容")
+	}
+}
+
 func TestTimeoutWritesEnvelope(t *testing.T) {
 	h := Timeout(20 * time.Millisecond)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(300 * time.Millisecond)

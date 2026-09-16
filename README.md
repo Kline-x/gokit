@@ -64,7 +64,7 @@ func main() {
 | `component/httpserver` | 基于标准库 `net/http` 的 HTTP 服务组件，含请求日志、异常恢复等中间件。 |
 | `component/sqldb` | 基于标准库 `database/sql` 的关系库组件，驱动由业务方自行引入注册。 |
 | `transport` | 与协议无关的错误类型与错误码表，以及 HTTP 侧的统一响应。 |
-| `component/grpcserver` | gRPC 服务组件，自带健康检查与反射，附 recover、请求日志、错误映射三个拦截器。 |
+| `component/grpcserver` | gRPC 服务组件，自带健康检查，默认装上 recover 与错误映射两个拦截器；反射默认关闭，按需在配置里打开。 |
 | `component/grpcclient` | gRPC 客户端连接组件，把下游返回的 status 还原成框架错误。 |
 
 ## 统一错误语义

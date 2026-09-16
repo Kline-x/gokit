@@ -184,3 +184,47 @@ func TestDefaultInterceptorsTranslateBusinessError(t *testing.T) {
 		t.Errorf("message = %q，cause 里的底层原因不该发给外部客户端", st.Message())
 	}
 }
+
+func TestInnerInterceptorErrorsAreTranslated(t *testing.T) {
+	// 在 handler 之前就拒绝请求的拦截器（鉴权、配额之类）返回的框架错误，
+	// 也必须被 ErrorMapper 翻译，而不是绕过翻译以 Unknown 加完整 Error()
+	// 内容（含 cause）抵达客户端。
+	auth := func(ctx context.Context, req any, _ *grpc.UnaryServerInfo,
+		_ grpc.UnaryHandler) (any, error) {
+		return nil, transport.Unauthenticated("NO_TOKEN", "缺少凭证").
+			WithCause(errors.New("jwt: 内部细节 secret=s3cr3t"))
+	}
+
+	s := New(Config{Name: "grpcserver.test", Addr: "127.0.0.1:0"}, nil,
+		WithInnerUnaryInterceptor(auth))
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = s.Stop(context.Background()) })
+
+	conn, err := grpc.NewClient(s.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("建连失败: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, callErr := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{})
+
+	st, ok := status.FromError(callErr)
+	if !ok {
+		t.Fatalf("返回的不是 gRPC status: %v", callErr)
+	}
+	if st.Code() != codes.Unauthenticated {
+		t.Errorf("code = %v, want Unauthenticated（内层拦截器的错误没有被翻译）", st.Code())
+	}
+	if st.Message() != "NO_TOKEN: 缺少凭证" {
+		t.Errorf("message = %q, want %q", st.Message(), "NO_TOKEN: 缺少凭证")
+	}
+	if strings.Contains(st.Message(), "secret=s3cr3t") {
+		t.Errorf("message = %q，cause 里的敏感信息不该发给外部客户端", st.Message())
+	}
+}

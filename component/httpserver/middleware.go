@@ -34,6 +34,7 @@ func Chain(h http.Handler, mw ...func(http.Handler) http.Handler) http.Handler {
 func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tracked := &wroteTracker{ResponseWriter: w}
 			defer func() {
 				rec := recover()
 				if rec == nil {
@@ -45,6 +46,11 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 					slog.String("path", r.URL.Path),
 					slog.String("stack", string(debug.Stack())),
 				)
+				if tracked.wrote {
+					// 响应已经写出去一部分，补不回来了，只记日志。
+					logger.ErrorContext(r.Context(), "panic 发生时响应已部分写出，无法再写错误信封")
+					return
+				}
 				// 客户端只拿到一句泛化描述，panic 的内容与堆栈只进日志。
 				// 走统一信封是为了让按信封解码的客户端不至于收到一个空响应体。
 				if renderErr := transport.RenderError(w,
@@ -53,9 +59,70 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 						slog.Any("error", renderErr))
 				}
 			}()
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(tracked, r)
 		})
 	}
+}
+
+// wroteTracker 只记录「有没有已经写出去过」。
+//
+// panic 发生时，handler 可能已经写了一部分响应。那时再写一个错误信封，
+// 只会把两段内容拼在一起，交给客户端一个解析不了的 body ——
+// 状态码也早就定死了，改不动。这种情况下唯一能做的就是别再写，让日志承载真相。
+//
+// 与 statusRecorder 保持独立：两个中间件各自只关心自己需要的那一点状态，
+// 不共用一个包装类型。
+type wroteTracker struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *wroteTracker) WriteHeader(code int) {
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *wroteTracker) Write(b []byte) (int, error) {
+	w.wrote = true
+	return w.ResponseWriter.Write(b)
+}
+
+// Unwrap 让 http.NewResponseController 能穿透本包装层，取到底层 writer。
+// Recover 在推荐顺序里排在 RequestLog 之内、业务 handler 之外，
+// 因此一个会调用 http.NewResponseController 设置读写超时的 handler
+// 必须能透过这层包装拿到真正的底层 writer。
+func (w *wroteTracker) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Flush 透传底层 writer 的 Flush，保证 SSE 这类流式响应仍然可用。
+//
+// 嵌入的是 http.ResponseWriter 接口而非具体类型，Go 不会把底层值的
+// Flush/Hijack 这类接口之外的方法提升上来——不显式转发，handler 对
+// w.(http.Flusher) 的断言会失败，SSE/WebSocket 会因为套了这层 Recover
+// 而失效，即便外层的 statusRecorder 本来是支持的。
+//
+// Flush 会隐式把响应提交给客户端（未写过时标准库按 200 处理），
+// 所以这里也要记为「已写」，避免 panic 发生后再叠加一份错误信封。
+func (w *wroteTracker) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		w.wrote = true
+		f.Flush()
+	}
+}
+
+// Hijack 透传底层 writer 的 Hijack，保证 WebSocket 升级这类接管连接的场景仍然可用。
+//
+// 接管成功后连接已经不归 HTTP 响应管，标记为「已写」是为了防止 panic 发生在
+// 接管之后时，deferred 逻辑还去对一个已被接管的连接写错误信封。
+func (w *wroteTracker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("httpserver: 底层 ResponseWriter 不支持 Hijack")
+	}
+	conn, buf, err := h.Hijack()
+	if err == nil {
+		w.wrote = true
+	}
+	return conn, buf, err
 }
 
 // statusRecorder 记录真实写出的状态码，供 RequestLog 使用。

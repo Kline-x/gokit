@@ -85,6 +85,9 @@ func Timeout(reason, message string) *Error {
 }
 
 // Code 取出任意 error 的错误码。nil 返回 CodeOK，未归类的错误返回 CodeInternal。
+//
+// 注意本函数返回的是原始 Code，可能是 CodeOK。在协议边界上决定状态码时应当用
+// (*Error).StatusCode()，它会把错误路径上的零码归为内部错误。
 func Code(err error) int {
 	if err == nil {
 		return CodeOK

@@ -34,9 +34,18 @@ func (h *HTTPHandler) greet(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// HTTP 中间件看不到 handler 的错误（http.Handler 不返回 error），
 		// 而 RenderError 只会把泛化描述发给客户端。底层原因就靠这一行留下来。
-		log.FromContext(r.Context()).ErrorContext(r.Context(), "greet 处理失败",
-			slog.String("name", r.PathValue("name")),
-			slog.Any("error", err))
+		//
+		// 客户端自己传错参数不算服务端故障，记到 warn 就够了；
+		// 5xx 才是真需要有人看的。
+		if transport.Code(err) >= transport.CodeInternal {
+			log.FromContext(r.Context()).ErrorContext(r.Context(), "greet 处理失败",
+				slog.String("name", r.PathValue("name")),
+				slog.Any("error", err))
+		} else {
+			log.FromContext(r.Context()).WarnContext(r.Context(), "greet 处理失败",
+				slog.String("name", r.PathValue("name")),
+				slog.Any("error", err))
+		}
 
 		if renderErr := transport.RenderError(w, err); renderErr != nil {
 			log.FromContext(r.Context()).ErrorContext(r.Context(), "写出错误响应失败",
