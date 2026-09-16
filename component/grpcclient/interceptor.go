@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -38,9 +39,10 @@ func TransportCode(c codes.Code) int {
 
 // ErrorRestorer 把下游返回的 gRPC status 还原成 transport.Error。
 //
-// 服务端拦截器把 message 写成 "REASON: 描述"，这里按第一个冒号拆开；
-// 拆不出来时整段当描述，Reason 留空。还原之后，调用方用 errors.Is
-// 判断错误类型的写法在本地实现与远程实现下完全一致 ——
+// 优先用 status detail 里的 errdetails.ErrorInfo 取 Reason 与 Metadata；
+// 没有 detail（例如下游不是 gokit 的服务）时，退回按 "REASON: 描述"
+// 拆 message 的老办法，拆不出来时整段当描述，Reason 留空。还原之后，
+// 调用方用 errors.Is 判断错误类型的写法在本地实现与远程实现下完全一致 ——
 // 这正是模块从单体拆成服务时调用方代码不用改的原因。
 func ErrorRestorer() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any,
@@ -52,7 +54,29 @@ func ErrorRestorer() grpc.UnaryClientInterceptor {
 
 		st := status.Convert(err)
 		reason, message := splitReason(st.Message())
-		return transport.New(TransportCode(st.Code()), reason, message).WithCause(err)
+		var metadata map[string]string
+
+		// detail 是权威来源：只要下游带了 ErrorInfo，就用它的 Reason 与 Metadata，
+		// 不必再去猜测文本里的冒号。拆文本只是对不带 detail 的下游的兜底。
+		for _, d := range st.Details() {
+			info, ok := d.(*errdetails.ErrorInfo)
+			if !ok {
+				continue
+			}
+			if info.GetReason() != "" {
+				reason = info.GetReason()
+			}
+			if len(info.GetMetadata()) > 0 {
+				metadata = info.GetMetadata()
+			}
+			break
+		}
+
+		restored := transport.New(TransportCode(st.Code()), reason, message)
+		if metadata != nil {
+			restored = restored.WithMetadata(metadata)
+		}
+		return restored.WithCause(err)
 	}
 }
 

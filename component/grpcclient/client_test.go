@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -242,6 +243,56 @@ func TestSplitReasonIgnoresGRPCProseWithColons(t *testing.T) {
 				t.Errorf("message = %q, want %q", message, tc.wantMessage)
 			}
 		})
+	}
+}
+
+func TestErrorRestorerPrefersDetailOverMessageSplitting(t *testing.T) {
+	st, detailErr := status.New(codes.InvalidArgument, "随便一段不含冒号的文本").
+		WithDetails(&errdetails.ErrorInfo{
+			Reason:   "NAME_REQUIRED",
+			Domain:   "gokit",
+			Metadata: map[string]string{"field": "name"},
+		})
+	if detailErr != nil {
+		t.Fatalf("构造 detail 失败: %v", detailErr)
+	}
+
+	restorer := ErrorRestorer()
+	invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+		return st.Err()
+	}
+
+	err := restorer(context.Background(), "/x/y", nil, nil, nil, invoker)
+
+	var te *transport.Error
+	if !errors.As(err, &te) {
+		t.Fatalf("未能还原成 *transport.Error: %v", err)
+	}
+	if te.Reason != "NAME_REQUIRED" {
+		t.Errorf("Reason = %q，应当取自 detail 而不是拆文本", te.Reason)
+	}
+	if te.Metadata["field"] != "name" {
+		t.Errorf("Metadata = %v，detail 里的结构化信息应当还原出来", te.Metadata)
+	}
+}
+
+func TestErrorRestorerFallsBackToMessageWhenNoDetail(t *testing.T) {
+	restorer := ErrorRestorer()
+	invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+		return status.Error(codes.NotFound, "USER_NOT_FOUND: 用户不存在")
+	}
+
+	err := restorer(context.Background(), "/x/y", nil, nil, nil, invoker)
+
+	var te *transport.Error
+	if !errors.As(err, &te) {
+		t.Fatalf("未能还原成 *transport.Error: %v", err)
+	}
+	if te.Reason != "USER_NOT_FOUND" {
+		t.Errorf("Reason = %q，没有 detail 时应当退回拆文本", te.Reason)
+	}
+	if len(te.Metadata) != 0 {
+		t.Errorf("Metadata = %v，没有 detail 时应当为空", te.Metadata)
 	}
 }
 

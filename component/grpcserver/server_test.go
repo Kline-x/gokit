@@ -2,13 +2,57 @@ package grpcserver
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
+
+	"github.com/Kline-x/gokit/transport"
 )
+
+// registrarFunc 让测试可以用一个函数字面量充当 ServiceRegistrar，
+// 不必依赖 protoc 生成代码。
+type registrarFunc func(*grpc.Server)
+
+func (f registrarFunc) Register(s *grpc.Server) { f(s) }
+
+// failingServiceDesc 手写一个只有一个方法的 gRPC 服务：直接返回一个
+// 带 cause 的业务错误。用它可以在不依赖任何 .proto 生成代码的前提下，
+// 验证默认拦截器链是否真的被装上——请求消息复用 healthpb 里已有的类型即可，
+// 因为这里根本不关心消息内容。
+func failingServiceDesc(businessErr error) *grpc.ServiceDesc {
+	return &grpc.ServiceDesc{
+		ServiceName: "grpcserver.test.Failing",
+		HandlerType: (*any)(nil),
+		Methods: []grpc.MethodDesc{
+			{
+				MethodName: "Fail",
+				Handler: func(_ any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+					req := new(healthpb.HealthCheckRequest)
+					if err := dec(req); err != nil {
+						return nil, err
+					}
+					handler := func(ctx context.Context, _ any) (any, error) {
+						return nil, businessErr
+					}
+					if interceptor == nil {
+						return handler(ctx, req)
+					}
+					info := &grpc.UnaryServerInfo{FullMethod: "/grpcserver.test.Failing/Fail"}
+					return interceptor(ctx, req, info, handler)
+				},
+			},
+		},
+		Streams:  []grpc.StreamDesc{},
+		Metadata: "grpcserver_test",
+	}
+}
 
 func newTestServer(t *testing.T, opts ...Option) *Server {
 	t.Helper()
@@ -97,5 +141,46 @@ func TestNameComesFromConfig(t *testing.T) {
 	}
 	if got := New(Config{Addr: "127.0.0.1:0"}, nil).Name(); got != "grpcserver" {
 		t.Errorf("Name() = %q, want 默认值 %q", got, "grpcserver")
+	}
+}
+
+func TestDefaultInterceptorsTranslateBusinessError(t *testing.T) {
+	// 使用方没传任何拦截器时，业务错误也必须被翻译成正确的 status code，
+	// 而不是带着 Error() 的完整内容（连同 cause 里的底层原因）以 Unknown 抵达客户端。
+	businessErr := transport.Internal("DB_FAIL", "内部错误").
+		WithCause(errors.New("dial tcp 10.0.0.1:3306: connect: connection refused"))
+
+	registrar := registrarFunc(func(s *grpc.Server) {
+		s.RegisterService(failingServiceDesc(businessErr), struct{}{})
+	})
+
+	s := New(Config{Name: "grpcserver.test", Addr: "127.0.0.1:0"}, []ServiceRegistrar{registrar})
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = s.Stop(context.Background()) })
+
+	conn, err := grpc.NewClient(s.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("建连失败: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	callErr := conn.Invoke(ctx, "/grpcserver.test.Failing/Fail",
+		&healthpb.HealthCheckRequest{}, &healthpb.HealthCheckResponse{})
+
+	st, ok := status.FromError(callErr)
+	if !ok {
+		t.Fatalf("返回的不是 gRPC status: %v", callErr)
+	}
+	if st.Code() != codes.Internal {
+		t.Errorf("code = %v, want Internal（说明默认拦截器没有生效，客户端会看到 Unknown）", st.Code())
+	}
+	if strings.Contains(st.Message(), "connect: connection refused") {
+		t.Errorf("message = %q，cause 里的底层原因不该发给外部客户端", st.Message())
 	}
 }

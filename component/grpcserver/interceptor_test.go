@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -231,6 +232,41 @@ func TestRequestLogRecordsErrorDetail(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "10.0.0.1") {
 		t.Errorf("日志里没有错误详情，排障会断线；实际日志=%q", buf.String())
+	}
+}
+
+func TestErrorMapperCarriesReasonAndMetadataAsDetail(t *testing.T) {
+	src := transport.InvalidArgument("NAME_REQUIRED", "name 不能为空").
+		WithMetadata(map[string]string{"field": "name"})
+
+	_, err := ErrorMapper()(context.Background(), nil, unaryInfo(),
+		func(context.Context, any) (any, error) { return nil, src })
+
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("返回的不是 gRPC status: %v", err)
+	}
+
+	var info *errdetails.ErrorInfo
+	for _, d := range st.Details() {
+		if got, isInfo := d.(*errdetails.ErrorInfo); isInfo {
+			info = got
+			break
+		}
+	}
+	if info == nil {
+		t.Fatal("status 里没有 ErrorInfo detail，Metadata 过不去")
+	}
+	if info.GetReason() != "NAME_REQUIRED" {
+		t.Errorf("detail 的 Reason = %q", info.GetReason())
+	}
+	if info.GetMetadata()["field"] != "name" {
+		t.Errorf("detail 的 Metadata = %v", info.GetMetadata())
+	}
+
+	// 文本仍要保持老格式，好让不认 detail 的客户端也能看懂。
+	if st.Message() != "NAME_REQUIRED: name 不能为空" {
+		t.Errorf("message = %q", st.Message())
 	}
 }
 

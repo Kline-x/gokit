@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -69,10 +70,20 @@ func ErrorMapper() grpc.UnaryServerInterceptor {
 			te = transport.FromError(err)
 		}
 
-		return resp, status.Error(
-			GRPCCode(te.StatusCode()),
-			fmt.Sprintf("%s: %s", te.Reason, te.Message),
-		)
+		st := status.New(GRPCCode(te.StatusCode()), fmt.Sprintf("%s: %s", te.Reason, te.Message))
+
+		// 把 Reason 与 Metadata 作为 status detail 一并带上。
+		// 文本里的 "REASON: 描述" 保持不变，好让不认识 detail 的客户端也能看懂；
+		// detail 则是权威来源，Metadata 只有这条路能过去。
+		withDetail, detailErr := st.WithDetails(&errdetails.ErrorInfo{
+			Reason:   te.Reason,
+			Domain:   "gokit",
+			Metadata: te.Metadata,
+		})
+		if detailErr == nil {
+			st = withDetail
+		}
+		return resp, st.Err()
 	}
 }
 
