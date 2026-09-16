@@ -43,8 +43,11 @@ func TestCheckLayersAcceptsCleanTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("干净的树不该有违反，实际 = %v", got)
+	if len(got.Violations) != 0 {
+		t.Errorf("干净的树不该有违反，实际 = %v", got.Violations)
+	}
+	if got.FilesChecked != 4 {
+		t.Errorf("FilesChecked = %d, want 4", got.FilesChecked)
 	}
 }
 
@@ -58,11 +61,27 @@ func TestCheckLayersCatchesDomainImportingOutside(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("违反数 = %d, want 1：%v", len(got), got)
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1：%v", len(got.Violations), got.Violations)
 	}
-	if !strings.Contains(got[0].String(), "sqldb") {
-		t.Errorf("违反信息里没点出是哪个 import：%s", got[0])
+	v := got.Violations[0]
+	if !strings.Contains(v.String(), "sqldb") {
+		t.Errorf("违反信息里没点出是哪个 import：%s", v)
+	}
+	// 对字段做逐一断言：File 必须是相对 root 的斜杠路径，Layer/Import/Rule
+	// 要能对得上具体是哪一条判定命中的，不能只靠数量断言蒙混过关。
+	wantFile := "internal/user/domain/user.go"
+	if v.File != wantFile {
+		t.Errorf("File = %q, want %q", v.File, wantFile)
+	}
+	if v.Layer != layerDomain {
+		t.Errorf("Layer = %q, want %q", v.Layer, layerDomain)
+	}
+	if v.Import != "github.com/Kline-x/gokit/component/sqldb" {
+		t.Errorf("Import = %q, want sqldb 的完整路径", v.Import)
+	}
+	if v.Rule != "domain 只能依赖标准库" {
+		t.Errorf("Rule = %q, want %q", v.Rule, "domain 只能依赖标准库")
 	}
 }
 
@@ -75,8 +94,8 @@ func TestCheckLayersCatchesApplicationImportingInfrastructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("违反数 = %d, want 1：%v", len(got), got)
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1：%v", len(got.Violations), got.Violations)
 	}
 }
 
@@ -90,8 +109,8 @@ func TestCheckLayersCatchesDomainImportingSiblingModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("违反数 = %d, want 1：%v", len(got), got)
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1：%v", len(got.Violations), got.Violations)
 	}
 }
 
@@ -104,8 +123,8 @@ func TestCheckLayersCatchesInterfacesImportingInfrastructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("违反数 = %d, want 1：%v", len(got), got)
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1：%v", len(got.Violations), got.Violations)
 	}
 }
 
@@ -119,8 +138,8 @@ func TestCheckLayersAllowsCrossModuleApplicationImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("跨模块引用对方 application 是允许的，实际 = %v", got)
+	if len(got.Violations) != 0 {
+		t.Errorf("跨模块引用对方 application 是允许的，实际 = %v", got.Violations)
 	}
 }
 
@@ -145,8 +164,8 @@ func TestCheckLayersIgnoresNonLayerDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("四层之外的目录不该被判违反，实际 = %v", got)
+	if len(got.Violations) != 0 {
+		t.Errorf("四层之外的目录不该被判违反，实际 = %v", got.Violations)
 	}
 }
 
@@ -156,7 +175,168 @@ func TestCheckLayersOnMissingDirectoryIsNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("空目录不该有违反，实际 = %v", got)
+	if len(got.Violations) != 0 {
+		t.Errorf("空目录不该有违反，实际 = %v", got.Violations)
+	}
+	if got.FilesChecked != 0 {
+		t.Errorf("FilesChecked = %d, want 0", got.FilesChecked)
+	}
+}
+
+// --- 以下是本轮代码评审新增的用例 ---
+
+// 模块路径不含点（如 go mod init myapp 这种完全合法的写法）时，之前
+// isStdlib 会把本项目自己的 import 误判成标准库，导致 judge 连 switch 都
+// 走不到，四条规则全部静默失效。这里用真实的 go.mod 搭一棵树来验证修复。
+func TestCheckLayersDetectsModuleWithoutDotInPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module myapp\n\ngo 1.22\n"), 0o600); err != nil {
+		t.Fatalf("写 go.mod 失败: %v", err)
+	}
+	writeGo(t, root, "internal/user/infrastructure/repo.go",
+		"database/sql", "myapp/internal/user/interfaces")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1（模块路径不含点不该让检查失效）：%v",
+			len(got.Violations), got.Violations)
+	}
+}
+
+// 不符合 internal/<模块>/<层> 形状的树（例如单模块布局）应当报告
+// 「没有检查任何文件」，不能和「查过且干净」混在一起都返回空切片。
+func TestCheckLayersReportsZeroFilesCheckedForUnrecognizedShape(t *testing.T) {
+	root := t.TempDir()
+	// 单模块布局：internal 下直接是层目录，缺一层模块名，相对路径只有 2 段。
+	writeGo(t, root, "internal/domain/user.go", "context")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 0 {
+		t.Errorf("不认识的目录形状不该报违反，实际 = %v", got.Violations)
+	}
+	if got.FilesChecked != 0 {
+		t.Errorf("FilesChecked = %d, want 0（这棵树里没有 internal/<模块>/<层> 形状的文件）",
+			got.FilesChecked)
+	}
+}
+
+// 规则 3 的另一半方向：infrastructure 引用本模块 interfaces。
+func TestCheckLayersCatchesInfrastructureImportingInterfaces(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/infrastructure/x.go",
+		"example.com/app/internal/user/interfaces")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1：%v", len(got.Violations), got.Violations)
+	}
+}
+
+// 规则 4 的违反侧：interfaces 跨模块直接引用对方的 infrastructure。
+func TestCheckLayersCatchesInterfacesCrossModuleInfrastructure(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/order/interfaces/x.go",
+		"example.com/app/internal/user/infrastructure")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1：%v", len(got.Violations), got.Violations)
+	}
+}
+
+// 规则 4 的违反侧：application 跨模块直接引用对方的 domain。
+func TestCheckLayersCatchesApplicationCrossModuleDomain(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/order/application/x.go",
+		"example.com/app/internal/user/domain")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1：%v", len(got.Violations), got.Violations)
+	}
+}
+
+// application 引用第三方包的放行路径：不该被判违反。
+func TestCheckLayersAllowsApplicationImportingThirdParty(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/application/x.go",
+		"github.com/Kline-x/gokit/transport")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 0 {
+		t.Errorf("application 引用第三方包应当放行，实际 = %v", got.Violations)
+	}
+}
+
+// internal/pkg/errors 这类共享内部包，第二段不是四层之一，任何层引用它
+// 都不该被误判成「引用了别的业务模块」。
+func TestCheckLayersAllowsSharedInternalPackage(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/application/x.go",
+		"example.com/app/internal/pkg/errors")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 0 {
+		t.Errorf("internal/pkg 这类共享包不该被当成业务模块，实际 = %v", got.Violations)
+	}
+}
+
+// 测试文件引入第三方测试辅助库是正常的，domain 那条规则对 _test.go 放宽。
+func TestCheckLayersAllowsDomainTestFileImportingThirdParty(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/domain/user_test.go",
+		"github.com/stretchr/testify/assert")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 0 {
+		t.Errorf("domain 的测试文件引入第三方测试库应当放行，实际 = %v", got.Violations)
+	}
+}
+
+// testdata 下的文件即便语法不合法，也不该参与解析——否则会把「有违反」
+// 变成「出错」。
+func TestCheckLayersSkipsTestdata(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/domain/user.go", "context")
+
+	badPath := filepath.Join(root, "internal/user/domain/testdata/bad.go")
+	if err := os.MkdirAll(filepath.Dir(badPath), 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	if err := os.WriteFile(badPath, []byte("这不是合法的 Go 代码 {{{"), 0o600); err != nil {
+		t.Fatalf("写文件失败: %v", err)
+	}
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v（testdata 不该被解析）", err)
+	}
+	if len(got.Violations) != 0 {
+		t.Errorf("干净的树不该有违反，实际 = %v", got.Violations)
 	}
 }

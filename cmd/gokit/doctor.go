@@ -46,16 +46,22 @@ func runDoctor(w io.Writer, args []string) int {
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "分层依赖方向")
-	violations, err := CheckLayers(dir)
+	result, err := CheckLayers(dir)
 	if err != nil {
 		printCheck(w, check{name: "依赖方向", ok: false, detail: err.Error()})
 		return 1
 	}
-	if len(violations) == 0 {
-		printCheck(w, check{name: "依赖方向", ok: true, detail: "没有发现违反"})
+	if len(result.Violations) == 0 {
+		// 「一个文件都没查」和「查过且干净」在输出上必须分得开，否则使用者
+		// 看到的绿灯可能只是因为目录形状没对上、根本没检查任何文件。
+		detail := "没有找到 internal/<模块>/<层> 结构，未检查任何文件"
+		if result.FilesChecked > 0 {
+			detail = fmt.Sprintf("检查了 %d 个文件，没有发现违反", result.FilesChecked)
+		}
+		printCheck(w, check{name: "依赖方向", ok: true, detail: detail})
 		return 0
 	}
-	for _, v := range violations {
+	for _, v := range result.Violations {
 		printCheck(w, check{name: "依赖方向", ok: false, detail: v.String()})
 	}
 	return 1
