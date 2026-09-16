@@ -107,3 +107,26 @@ func TestDefaultNameIsUsedWhenEmpty(t *testing.T) {
 		t.Errorf("Name() = %q, want %q", s.Name(), "httpserver")
 	}
 }
+
+func TestStopBeforeStartIsSafe(t *testing.T) {
+	s := New(Config{Addr: "127.0.0.1:0"}, http.NewServeMux())
+	if err := s.Stop(context.Background()); err != nil {
+		t.Errorf("Stop() error = %v, want nil（从未 Start 过也应能安全 Stop）", err)
+	}
+	if s.Addr() != nil {
+		t.Errorf("Addr() = %v, want nil（未 Start 时不应有监听地址）", s.Addr())
+	}
+}
+
+func TestStopTwiceIsSafe(t *testing.T) {
+	s := newTestServer(t)
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := s.Stop(context.Background()); err != nil {
+		t.Fatalf("first Stop() error = %v", err)
+	}
+	if err := s.Stop(context.Background()); err != nil {
+		t.Errorf("second Stop() error = %v, want nil（重复 Stop 应当是安全的空操作）", err)
+	}
+}

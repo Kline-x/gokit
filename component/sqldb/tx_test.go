@@ -2,6 +2,7 @@ package sqldb
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 )
@@ -107,5 +108,56 @@ func TestExecutorSwitchesBetweenTxAndPool(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Tx() error = %v", err)
+	}
+}
+
+func TestTxKeepsOriginalErrorWhenRollbackAlsoFails(t *testing.T) {
+	db, drv := newFakeDB(t)
+	bizErr := errors.New("业务失败")
+	rbErr := errors.New("回滚也失败")
+	drv.setRollbackErr(rbErr)
+
+	err := db.Tx(context.Background(), func(context.Context) error { return bizErr })
+
+	if !errors.Is(err, bizErr) {
+		t.Errorf("Tx() error 丢了原始业务错误: %v", err)
+	}
+	if !errors.Is(err, rbErr) {
+		t.Errorf("Tx() error 丢了回滚错误: %v", err)
+	}
+	if got := drv.rollbacks.Load(); got != 1 {
+		t.Errorf("回滚次数 = %d, want 1", got)
+	}
+}
+
+func TestTxToleratesErrTxDoneOnRollback(t *testing.T) {
+	db, drv := newFakeDB(t)
+	bizErr := errors.New("业务失败")
+	// 驱动可能已经自行结束了事务，这时回滚会返回 sql.ErrTxDone，
+	// 它不该盖过真正的业务错误，也不该被当成新的失败报出来。
+	drv.setRollbackErr(sql.ErrTxDone)
+
+	err := db.Tx(context.Background(), func(context.Context) error { return bizErr })
+
+	if !errors.Is(err, bizErr) {
+		t.Fatalf("Tx() error = %v, want 原始业务错误", err)
+	}
+	if errors.Is(err, sql.ErrTxDone) {
+		t.Errorf("Tx() error 里混进了 sql.ErrTxDone: %v", err)
+	}
+}
+
+func TestTxReportsCommitFailure(t *testing.T) {
+	db, drv := newFakeDB(t)
+	commitErr := errors.New("提交失败")
+	drv.setCommitErr(commitErr)
+
+	err := db.Tx(context.Background(), func(context.Context) error { return nil })
+
+	if !errors.Is(err, commitErr) {
+		t.Fatalf("Tx() error = %v, want 包含提交错误", err)
+	}
+	if got := drv.commits.Load(); got != 1 {
+		t.Errorf("提交次数 = %d, want 1", got)
 	}
 }

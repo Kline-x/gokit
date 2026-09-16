@@ -15,12 +15,14 @@ var driverSeq atomic.Int64
 
 // fakeDriver 是测试专用的 database/sql 驱动，记录打开次数与事务的提交、回滚次数。
 type fakeDriver struct {
-	mu        sync.Mutex
-	opened    int
-	openErr   error
-	pingErr   error
-	commits   atomic.Int32
-	rollbacks atomic.Int32
+	mu          sync.Mutex
+	opened      int
+	openErr     error
+	pingErr     error
+	commitErr   error
+	rollbackErr error
+	commits     atomic.Int32
+	rollbacks   atomic.Int32
 }
 
 func (d *fakeDriver) Open(string) (driver.Conn, error) {
@@ -45,6 +47,30 @@ func (d *fakeDriver) currentPingErr() error {
 	return d.pingErr
 }
 
+func (d *fakeDriver) setCommitErr(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.commitErr = err
+}
+
+func (d *fakeDriver) currentCommitErr() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.commitErr
+}
+
+func (d *fakeDriver) setRollbackErr(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.rollbackErr = err
+}
+
+func (d *fakeDriver) currentRollbackErr() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.rollbackErr
+}
+
 type fakeConn struct{ drv *fakeDriver }
 
 func (c *fakeConn) Prepare(string) (driver.Stmt, error) { return &fakeStmt{}, nil }
@@ -56,12 +82,12 @@ type fakeTx struct{ drv *fakeDriver }
 
 func (t *fakeTx) Commit() error {
 	t.drv.commits.Add(1)
-	return nil
+	return t.drv.currentCommitErr()
 }
 
 func (t *fakeTx) Rollback() error {
 	t.drv.rollbacks.Add(1)
-	return nil
+	return t.drv.currentRollbackErr()
 }
 
 type fakeStmt struct{}

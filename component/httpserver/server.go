@@ -31,6 +31,11 @@ type Config struct {
 	IdleTimeout time.Duration `yaml:"idle_timeout"`
 	// ShutdownTimeout 是优雅关闭时等待在途请求的上限。
 	// 0 表示使用默认值；本组件不支持 sqldb 那样的 -1 哨兵。
+	//
+	// 注意它与 App 的整体停止超时是两笔预算：App 的超时覆盖所有组件的顺序停止，
+	// 而这个只管本服务排空在途请求。两者默认都是 10 秒，
+	// 意味着一次慢排空就能吃掉整个预算，让后面的组件在已过期的上下文里停止。
+	// 多组件应用应当把本值调得比 App 的整体超时明显小。
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 }
 
