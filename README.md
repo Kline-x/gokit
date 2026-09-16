@@ -63,6 +63,17 @@ func main() {
 | `component/log` | 基于标准库 `log/slog` 的日志组件，支持从 `context` 取当前请求的 logger。 |
 | `component/httpserver` | 基于标准库 `net/http` 的 HTTP 服务组件，含请求日志、异常恢复等中间件。 |
 | `component/sqldb` | 基于标准库 `database/sql` 的关系库组件，驱动由业务方自行引入注册。 |
+| `transport` | 与协议无关的错误类型与错误码表，以及 HTTP 侧的统一响应。 |
+| `component/grpcserver` | gRPC 服务组件，自带健康检查与反射，附 recover、请求日志、错误映射三个拦截器。 |
+| `component/grpcclient` | gRPC 客户端连接组件，把下游返回的 status 还原成框架错误。 |
+
+## 统一错误语义
+
+业务层只返回 `transport.Error`：一个错误码、一个稳定的机器可读 `Reason`、一句给人看的 `Message`。两条协议各自把它翻译成自己的表达：HTTP 侧由 `transport.RenderError` 翻成状态码，配上统一信封 `{code, reason, message, data}`；gRPC 侧由服务端拦截器翻成 status，客户端拦截器再把它还原回 `transport.Error`。
+
+结果是调用方判断错误的写法（`errors.Is` 比对一个哨兵错误）在本地实现与远程实现下完全一致，这正是模块能从单体拆出去而调用方不用改代码的原因。
+
+两点约定：`Reason` 只用大写字母、数字与下划线，gRPC 侧靠这个形状把它从 status 文本里认出来；未归类的错误只会把泛化描述发给客户端，底层原因留在服务端日志里。
 
 ## 更多
 
@@ -71,8 +82,6 @@ func main() {
 
 ## 本版不包含
 
-- gRPC 组件
-- 统一错误码与响应
 - 脚手架 CLI
 - 服务注册发现
 - 链路追踪

@@ -88,6 +88,11 @@ func Recover(logger *slog.Logger) grpc.UnaryServerInterceptor {
 
 // RequestLog 记录每次调用的方法、状态码与耗时，
 // 同时把 logger 放进 ctx，供业务代码用 log.FromContext 取用。
+//
+// 顺序要求：本拦截器必须排在 ErrorMapper 之外（更靠外的一层）。
+// 它靠 status.Code(err) 取状态码，而业务错误要经 ErrorMapper 翻译之后才是 status；
+// 若排在里面，日志会把业务错误一律记成 Unknown，而客户端收到的状态码却是对的 ——
+// 这种不一致最难排查。推荐顺序：RequestLog、Recover、ErrorMapper。
 func RequestLog(logger *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler) (any, error) {
