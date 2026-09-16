@@ -1,0 +1,16 @@
+log:
+  level: info
+  format: json
+  output: stdout
+
+http:
+  name: "httpserver"
+  addr: ":8080"
+  read_timeout: 15s
+  write_timeout: 15s
+
+greeter:
+  name: "grpcclient.greeter"
+  target: "127.0.0.1:9000"
+  dial_timeout: 5s
+  block: false
