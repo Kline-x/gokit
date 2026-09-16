@@ -52,9 +52,13 @@ func (e *Error) Error() string {
 // Is 让 errors.Is 按 Code 与 Reason 匹配，与 Message、Metadata 无关。
 //
 // 这样业务可以定义一个不带描述的哨兵错误，用它去匹配任何同类错误。
+//
+// 这里对 target 做直接类型断言而不是 errors.As：拆解调用方那条错误链
+// 是 errors.Is 自己的职责，如果这里再去拆 target，那么「target 只是
+// 包装了一个 Error」也会被误判成匹配。
 func (e *Error) Is(target error) bool {
-	var t *Error
-	if !errors.As(target, &t) {
+	t, ok := target.(*Error)
+	if !ok {
 		return false
 	}
 	return e.Code == t.Code && e.Reason == t.Reason

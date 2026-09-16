@@ -108,3 +108,25 @@ func TestFromErrorReturnsNilForNil(t *testing.T) {
 		t.Errorf("FromError(nil) = %v, want nil", got)
 	}
 }
+
+func TestErrorIsRejectsTargetThatMerelyWrapsAnError(t *testing.T) {
+	actual := New(404, "USER_NOT_FOUND", "id=7 的用户不存在")
+	// target 自身不是 *Error，只是包了一个。拆解调用方的错误链是
+	// errors.Is 的职责，Is 方法不该越过这层去匹配。
+	target := fmt.Errorf("上下文: %w", New(404, "USER_NOT_FOUND", ""))
+
+	if errors.Is(actual, target) {
+		t.Error("target 只是包装了一个同类错误，不应判定为匹配")
+	}
+}
+
+func TestErrorIsStillMatchesWhenReceiverIsWrapped(t *testing.T) {
+	// 反过来：被包装的是接收方那条链时，errors.Is 会自己拆开，应当匹配。
+	// 这条与上一条一起，把「谁负责拆链」这件事钉住。
+	sentinel := New(404, "USER_NOT_FOUND", "")
+	wrapped := fmt.Errorf("查询失败: %w", New(404, "USER_NOT_FOUND", "id=7"))
+
+	if !errors.Is(wrapped, sentinel) {
+		t.Error("接收方被包装时 errors.Is 仍应匹配")
+	}
+}
