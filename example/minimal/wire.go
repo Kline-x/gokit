@@ -22,11 +22,14 @@ func initApp(cfg Config) (*Bundle, error) {
 	panic(wire.Build(
 		provideLogConfig,
 		provideHTTPConfig,
+		provideGRPCConfig,
 		provideDBConfig,
 		log.New,
 		provideApp,
 		provideHandler,
 		provideHTTPServer,
+		provideServiceRegistrars,
+		provideGRPCServer,
 		provideComponents,
 		sqldb.New,
 		// 事务能力由共享的数据库组件提供。这个绑定放在组合根而不是业务模块里，

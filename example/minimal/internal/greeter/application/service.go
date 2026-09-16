@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/domain"
+	"github.com/Kline-x/gokit/transport"
 )
 
 // GreetRequest 是 Greet 用例的入参。
@@ -49,7 +50,8 @@ func NewLocalService(repo domain.Repository, tx Transactor) *LocalService {
 // 查询与写入包在同一个事务里，事务边界由应用层决定。
 func (s *LocalService) Greet(ctx context.Context, req GreetRequest) (GreetReply, error) {
 	if req.Name == "" {
-		return GreetReply{}, errors.New("name 不能为空")
+		return GreetReply{}, transport.InvalidArgument("NAME_REQUIRED", "name 不能为空").
+			WithMetadata(map[string]string{"field": "name"})
 	}
 
 	var reply GreetReply

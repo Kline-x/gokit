@@ -3,10 +3,12 @@
 package interfaces
 
 import (
-	"encoding/json"
+	"log/slog"
 	"net/http"
 
+	"github.com/Kline-x/gokit/component/log"
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/application"
+	"github.com/Kline-x/gokit/transport"
 )
 
 // HTTPHandler 把问候用例暴露成 HTTP 接口。
@@ -30,12 +32,15 @@ func (h *HTTPHandler) greet(w http.ResponseWriter, r *http.Request) {
 		Name: r.PathValue("name"),
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if renderErr := transport.RenderError(w, err); renderErr != nil {
+			log.FromContext(r.Context()).ErrorContext(r.Context(), "写出错误响应失败",
+				slog.Any("error", renderErr))
+		}
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(map[string]string{"text": reply.Text}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if renderErr := transport.Render(w, map[string]string{"text": reply.Text}); renderErr != nil {
+		log.FromContext(r.Context()).ErrorContext(r.Context(), "写出响应失败",
+			slog.Any("error", renderErr))
 	}
 }

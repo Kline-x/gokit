@@ -8,6 +8,12 @@ http:
   read_timeout: 15s
   write_timeout: 15s
 
+grpc:
+  name: "grpcserver"
+  addr: ":9000"
+  shutdown_timeout: 10s
+  enable_reflection: true
+
 db:
   driver: sqlite
   dsn: "file:minimal.db"
