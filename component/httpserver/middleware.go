@@ -105,6 +105,10 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return conn, buf, err
 }
 
+// Unwrap 让 http.NewResponseController 能穿透本包装层，
+// 取到底层 writer 去设置读写截止时间。
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // ReadFrom 透传底层 writer 的 ReadFrom，保留 io.Copy 的零拷贝快路径。
 func (r *statusRecorder) ReadFrom(src io.Reader) (int64, error) {
 	if r.status == 0 {
@@ -165,6 +169,10 @@ func RequestLog(logger *slog.Logger) func(http.Handler) http.Handler {
 //
 // 超时响应由 http.TimeoutHandler 直接写出，不经过外层包装，
 // 因此 Timeout 必须排在 RequestLog 之内，否则日志记录的状态码会失真。
+//
+// 另需注意：http.TimeoutHandler 会把整个响应缓冲起来，它交给下游的 writer
+// 既不实现 Flusher 也不实现 Hijacker。因此只要用了 Timeout，
+// 它内层的 SSE 流式输出与 WebSocket 升级都会失效。
 func Timeout(d time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.TimeoutHandler(next, d, "请求处理超时")

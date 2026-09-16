@@ -103,6 +103,44 @@ func TestZeroKeepsDefaults(t *testing.T) {
 	}
 }
 
+// TestTwoDBsCanCarryDifferentNames 证明同一进程里可以用不同的 Name
+// 区分两个数据库实例（例如主库与只读副本），从而能在 App 中共存而不触发内核的重名校验。
+func TestTwoDBsCanCarryDifferentNames(t *testing.T) {
+	name1, _ := registerFakeDriver(t)
+	name2, _ := registerFakeDriver(t)
+
+	primary, err := New(Config{Name: "sqldb.primary", Driver: name1, DSN: "fake"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = primary.Stop(context.Background()) })
+
+	replica, err := New(Config{Name: "sqldb.replica", Driver: name2, DSN: "fake"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = replica.Stop(context.Background()) })
+
+	if primary.Name() == replica.Name() {
+		t.Fatalf("两个实例的 Name 相同：%q", primary.Name())
+	}
+	if primary.Name() != "sqldb.primary" {
+		t.Errorf("Name() = %q, want %q", primary.Name(), "sqldb.primary")
+	}
+}
+
+func TestDefaultDBNameIsUsedWhenEmpty(t *testing.T) {
+	name, _ := registerFakeDriver(t)
+	db, err := New(Config{Driver: name, DSN: "fake"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Stop(context.Background()) })
+	if db.Name() != "sqldb" {
+		t.Errorf("Name() = %q, want %q", db.Name(), "sqldb")
+	}
+}
+
 func TestNegativePingTimeoutDisablesDeadline(t *testing.T) {
 	name, _ := registerFakeDriver(t)
 

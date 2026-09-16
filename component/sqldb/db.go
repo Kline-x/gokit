@@ -17,6 +17,9 @@ import (
 // database/sql 的零值语义」。之所以需要这个哨兵，是因为配置结构体只能用
 // 值类型字段，YAML 里「没写这个字段」和「写了 0」无法区分。
 type Config struct {
+	// Name 是组件在 App 中的唯一标识。留空时取默认值。
+	// 同一个 App 里注册多个同类组件时，必须给出互不相同的名字。
+	Name string `yaml:"name"`
 	// Driver 是已注册的 database/sql 驱动名，例如 mysql、pgx、sqlite。
 	Driver string `yaml:"driver"`
 	// DSN 是驱动自己的连接串。
@@ -36,6 +39,7 @@ type Config struct {
 // DefaultConfig 返回一组保守的默认值。
 func DefaultConfig() Config {
 	return Config{
+		Name:            "sqldb",
 		MaxOpenConns:    50,
 		MaxIdleConns:    10,
 		ConnMaxLifetime: time.Hour,
@@ -71,6 +75,9 @@ func resolveDuration(v, def time.Duration) time.Duration {
 
 func (c Config) withDefaults() Config {
 	d := DefaultConfig()
+	if c.Name == "" {
+		c.Name = d.Name
+	}
 	c.MaxOpenConns = resolveInt(c.MaxOpenConns, d.MaxOpenConns)
 	c.MaxIdleConns = resolveInt(c.MaxIdleConns, d.MaxIdleConns)
 	c.ConnMaxLifetime = resolveDuration(c.ConnMaxLifetime, d.ConnMaxLifetime)
@@ -92,7 +99,7 @@ func New(cfg Config) (*DB, error) {
 
 	db, err := sql.Open(cfg.Driver, cfg.DSN)
 	if err != nil {
-		return nil, fmt.Errorf("sqldb: 打开驱动 %s 失败: %w", cfg.Driver, err)
+		return nil, fmt.Errorf("sqldb: %s 打开驱动 %s 失败: %w", cfg.Name, cfg.Driver, err)
 	}
 	db.SetMaxOpenConns(cfg.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.MaxIdleConns)
@@ -103,7 +110,7 @@ func New(cfg Config) (*DB, error) {
 }
 
 // Name 实现 app.Component。
-func (d *DB) Name() string { return "sqldb" }
+func (d *DB) Name() string { return d.cfg.Name }
 
 // Start 实现 app.Component，通过一次 Ping 确认连接可用。
 func (d *DB) Start(ctx context.Context) error {
@@ -113,7 +120,7 @@ func (d *DB) Start(ctx context.Context) error {
 // Stop 实现 app.Component，关闭连接池。
 func (d *DB) Stop(context.Context) error {
 	if err := d.DB.Close(); err != nil {
-		return fmt.Errorf("sqldb: 关闭连接池失败: %w", err)
+		return fmt.Errorf("sqldb: %s 关闭连接池失败: %w", d.cfg.Name, err)
 	}
 	return nil
 }
@@ -126,7 +133,7 @@ func (d *DB) Health(ctx context.Context) error {
 		defer cancel()
 	}
 	if err := d.DB.PingContext(ctx); err != nil {
-		return fmt.Errorf("sqldb: 探活失败: %w", err)
+		return fmt.Errorf("sqldb: %s 探活失败: %w", d.cfg.Name, err)
 	}
 	return nil
 }

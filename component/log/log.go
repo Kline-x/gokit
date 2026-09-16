@@ -15,6 +15,9 @@ import (
 
 // Config 是日志组件的配置。
 type Config struct {
+	// Name 是组件在 App 中的唯一标识。留空时取默认值。
+	// 同一个 App 里注册多个同类组件时，必须给出互不相同的名字。
+	Name string `yaml:"name"`
 	// Level 取 debug / info / warn / error，默认 info。
 	Level string `yaml:"level"`
 	// Format 取 json / text，默认 json。
@@ -25,11 +28,14 @@ type Config struct {
 
 // DefaultConfig 返回可直接使用的默认配置。
 func DefaultConfig() Config {
-	return Config{Level: "info", Format: "json", Output: "stdout"}
+	return Config{Name: "log", Level: "info", Format: "json", Output: "stdout"}
 }
 
 func (c Config) withDefaults() Config {
 	d := DefaultConfig()
+	if c.Name == "" {
+		c.Name = d.Name
+	}
 	if c.Level == "" {
 		c.Level = d.Level
 	}
@@ -45,6 +51,7 @@ func (c Config) withDefaults() Config {
 // Logger 是实现了 app.Component 方法集的日志器。
 type Logger struct {
 	*slog.Logger
+	name   string
 	level  *slog.LevelVar
 	closer io.Closer
 }
@@ -55,10 +62,10 @@ func New(cfg Config) (*Logger, error) {
 
 	lv := new(slog.LevelVar)
 	if err := parseLevel(cfg.Level, lv); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("log: %s %w", cfg.Name, err)
 	}
 
-	w, closer, err := openOutput(cfg.Output)
+	w, closer, err := openOutput(cfg.Name, cfg.Output)
 	if err != nil {
 		return nil, err
 	}
@@ -74,14 +81,14 @@ func New(cfg Config) (*Logger, error) {
 		if closer != nil {
 			_ = closer.Close()
 		}
-		return nil, fmt.Errorf("log: 未知日志格式 %q，仅支持 json 与 text", cfg.Format)
+		return nil, fmt.Errorf("log: %s 未知日志格式 %q，仅支持 json 与 text", cfg.Name, cfg.Format)
 	}
 
-	return &Logger{Logger: slog.New(h), level: lv, closer: closer}, nil
+	return &Logger{Logger: slog.New(h), name: cfg.Name, level: lv, closer: closer}, nil
 }
 
 // Name 实现 app.Component。
-func (l *Logger) Name() string { return "log" }
+func (l *Logger) Name() string { return l.name }
 
 // Start 实现 app.Component。日志器在 New 时已就绪，这里是空操作。
 func (l *Logger) Start(context.Context) error { return nil }
@@ -92,7 +99,7 @@ func (l *Logger) Stop(context.Context) error {
 		return nil
 	}
 	if err := l.closer.Close(); err != nil {
-		return fmt.Errorf("log: 关闭日志文件失败: %w", err)
+		return fmt.Errorf("log: %s 关闭日志文件失败: %w", l.name, err)
 	}
 	return nil
 }
@@ -116,7 +123,7 @@ func parseLevel(s string, lv *slog.LevelVar) error {
 	return nil
 }
 
-func openOutput(out string) (io.Writer, io.Closer, error) {
+func openOutput(name, out string) (io.Writer, io.Closer, error) {
 	switch strings.ToLower(out) {
 	case "stdout":
 		return os.Stdout, nil, nil
@@ -125,7 +132,7 @@ func openOutput(out string) (io.Writer, io.Closer, error) {
 	}
 	f, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return nil, nil, fmt.Errorf("log: 打开日志文件 %s 失败: %w", out, err)
+		return nil, nil, fmt.Errorf("log: %s 打开日志文件 %s 失败: %w", name, out, err)
 	}
 	return f, f, nil
 }

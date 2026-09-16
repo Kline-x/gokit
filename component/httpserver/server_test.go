@@ -84,3 +84,26 @@ func TestServerName(t *testing.T) {
 		t.Errorf("Name() = %q, want %q", got, "httpserver")
 	}
 }
+
+// TestTwoServersCanCarryDifferentNames 证明同一进程里可以用不同的 Name
+// 区分两个 httpserver 实例（例如业务 API 与 metrics/pprof 各占一个端口），
+// 从而能在 App 中共存而不触发内核的重名校验。内核层的校验本身不在本包职责内，
+// 这里只断言 Name() 本身可配置且互不相同。
+func TestTwoServersCanCarryDifferentNames(t *testing.T) {
+	api := New(Config{Name: "httpserver.api", Addr: "127.0.0.1:0"}, http.NewServeMux())
+	metrics := New(Config{Name: "httpserver.metrics", Addr: "127.0.0.1:0"}, http.NewServeMux())
+
+	if api.Name() == metrics.Name() {
+		t.Fatalf("两个实例的 Name 相同：%q", api.Name())
+	}
+	if api.Name() != "httpserver.api" {
+		t.Errorf("Name() = %q, want %q", api.Name(), "httpserver.api")
+	}
+}
+
+func TestDefaultNameIsUsedWhenEmpty(t *testing.T) {
+	s := New(Config{Addr: "127.0.0.1:0"}, http.NewServeMux())
+	if s.Name() != "httpserver" {
+		t.Errorf("Name() = %q, want %q", s.Name(), "httpserver")
+	}
+}
