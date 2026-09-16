@@ -51,7 +51,7 @@ func runDoctor(w io.Writer, args []string) int {
 		printCheck(w, check{name: "依赖方向", ok: false, detail: err.Error()})
 		return 1
 	}
-	if len(result.Violations) == 0 {
+	if len(result.Violations) == 0 && len(result.ParseFailures) == 0 {
 		// 「一个文件都没查」和「查过且干净」在输出上必须分得开，否则使用者
 		// 看到的绿灯可能只是因为目录形状没对上、根本没检查任何文件。
 		detail := "没有找到 internal/<模块>/<层> 结构，未检查任何文件"
@@ -63,6 +63,9 @@ func runDoctor(w io.Writer, args []string) int {
 	}
 	for _, v := range result.Violations {
 		printCheck(w, check{name: "依赖方向", ok: false, detail: v.String()})
+	}
+	for _, pf := range result.ParseFailures {
+		printCheck(w, check{name: "依赖方向", ok: false, detail: pf.String()})
 	}
 	return 1
 }

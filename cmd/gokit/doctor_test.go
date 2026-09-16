@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -30,6 +32,45 @@ func TestDoctorMarksResults(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "✓") && !strings.Contains(out, "✗") {
 		t.Errorf("每一项都该有明确的通过或未通过标记：\n%s", out)
+	}
+}
+
+// 没有 internal 目录的树上跑 doctor，输出必须说明「未检查任何文件」，不能
+// 和「查过且干净」共用同一句「没有发现违反」——那样使用者看到的绿灯可能
+// 只是因为目录形状没对上，根本没检查任何文件。
+func TestDoctorReportsZeroFilesChecked(t *testing.T) {
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	code := runDoctor(&buf, []string{dir})
+
+	out := buf.String()
+	if !strings.Contains(out, "未检查任何文件") {
+		t.Errorf("没有 internal 目录时，输出里应该说明未检查任何文件：\n%s", out)
+	}
+	if code != 0 {
+		t.Errorf("退出码 = %d, want 0（没检查任何文件不算失败）", code)
+	}
+}
+
+// 有文件解析失败时，doctor 要照实报出来，且退出码不能是 0。
+func TestDoctorReportsParseFailuresAndFailsNonZero(t *testing.T) {
+	dir := t.TempDir()
+	badPath := filepath.Join(dir, "internal/order/application/broken.go")
+	if err := os.MkdirAll(filepath.Dir(badPath), 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	if err := os.WriteFile(badPath, []byte("这不是合法的 Go 代码 {{{"), 0o600); err != nil {
+		t.Fatalf("写文件失败: %v", err)
+	}
+
+	var buf bytes.Buffer
+	code := runDoctor(&buf, []string{dir})
+
+	if code == 0 {
+		t.Errorf("有解析失败的文件时退出码不该是 0")
+	}
+	if !strings.Contains(buf.String(), "解析失败") {
+		t.Errorf("输出里应该报出解析失败的文件：\n%s", buf.String())
 	}
 }
 

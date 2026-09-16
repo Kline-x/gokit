@@ -167,6 +167,14 @@ func TestCheckLayersIgnoresNonLayerDirectories(t *testing.T) {
 	if len(got.Violations) != 0 {
 		t.Errorf("四层之外的目录不该被判违反，实际 = %v", got.Violations)
 	}
+	// 把 moduleAndLayer 的四层白名单整个删掉，remote/client.go 会以
+	// layer="remote" 进入 judge，而 judge 的 switch 没有对应 case、直接
+	// 落到末尾返回不违反——这个测试当时依然 0 违反通过，是假绿。
+	// FilesChecked 断言能识破这种改法：只有 internal/user/domain/user.go
+	// 落在 internal/<模块>/<层> 形状里，应该恰好是 1。
+	if got.FilesChecked != 1 {
+		t.Errorf("FilesChecked = %d, want 1（只有 internal/user/domain/user.go 落在四层形状里）", got.FilesChecked)
+	}
 }
 
 func TestCheckLayersOnMissingDirectoryIsNotAnError(t *testing.T) {
@@ -247,6 +255,8 @@ func TestCheckLayersCatchesInterfacesCrossModuleInfrastructure(t *testing.T) {
 	root := t.TempDir()
 	writeGo(t, root, "internal/order/interfaces/x.go",
 		"example.com/app/internal/user/infrastructure")
+	// 让 user 真的被识别成业务模块，否则模块集合逻辑会把它当成共享包放行。
+	writeGo(t, root, "internal/user/domain/user.go", "context")
 
 	got, err := CheckLayers(root)
 	if err != nil {
@@ -262,6 +272,8 @@ func TestCheckLayersCatchesApplicationCrossModuleDomain(t *testing.T) {
 	root := t.TempDir()
 	writeGo(t, root, "internal/order/application/x.go",
 		"example.com/app/internal/user/domain")
+	// 让 user 真的被识别成业务模块，否则模块集合逻辑会把它当成共享包放行。
+	writeGo(t, root, "internal/user/domain/user.go", "context")
 
 	got, err := CheckLayers(root)
 	if err != nil {
@@ -338,5 +350,144 @@ func TestCheckLayersSkipsTestdata(t *testing.T) {
 	}
 	if len(got.Violations) != 0 {
 		t.Errorf("干净的树不该有违反，实际 = %v", got.Violations)
+	}
+}
+
+// --- 以下是本轮复审新增的用例：parseInternalImport 曾经把「跨模块走侧门」
+// 变成静默放行，这里补上验证 ---
+
+// 跨模块直接引用对方的非层目录（remote 这类出站适配器）是「跨模块走侧门」，
+// 规则 4 要求跨模块只能走对方的 application，这条必须判违反。
+func TestCheckLayersCatchesApplicationCrossModuleSideDoor(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/order/application/x.go",
+		"example.com/app/internal/user/remote")
+	// 让 user 真的被识别成业务模块（domain 子目录里有文件），否则新的模块
+	// 集合逻辑会把它当成共享包放行，这个测试就是假绿的。
+	writeGo(t, root, "internal/user/domain/user.go", "context")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1（跨模块引用对方 remote 是走侧门）：%v", len(got.Violations), got.Violations)
+	}
+}
+
+// 跨模块直接引用对方的模块根包（没有第三段，例如 module.go 所在的目录）
+// 同样是「跨模块走侧门」，要判违反。
+func TestCheckLayersCatchesInterfacesCrossModuleRootPackage(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/order/interfaces/x.go",
+		"example.com/app/internal/user")
+	writeGo(t, root, "internal/user/domain/user.go", "context")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1（跨模块引用对方模块根包是走侧门）：%v", len(got.Violations), got.Violations)
+	}
+}
+
+// 同模块内引用非层目录（remote）也要落进「application 只能 import 本模块
+// domain」的判定，不能因为 remote 不是四层名字就悄悄放行。
+func TestCheckLayersCatchesApplicationSameModuleSideDoor(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/application/x.go",
+		"example.com/app/internal/user/remote")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1（同模块引用 remote 不是 domain）：%v", len(got.Violations), got.Violations)
+	}
+}
+
+// --- 以下验证 modulePathOf 对常见 go.mod 写法的容错 ---
+
+func writeModFile(t *testing.T, root, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(content), 0o600); err != nil {
+		t.Fatalf("写 go.mod 失败: %v", err)
+	}
+}
+
+func TestModulePathOfHandlesTrailingComment(t *testing.T) {
+	root := t.TempDir()
+	writeModFile(t, root, "module myapp // 注释\n\ngo 1.22\n")
+
+	got, ok := modulePathOf(root)
+	if !ok || got != "myapp" {
+		t.Errorf("modulePathOf() = (%q, %v), want (\"myapp\", true)", got, ok)
+	}
+}
+
+func TestModulePathOfHandlesTabSeparator(t *testing.T) {
+	root := t.TempDir()
+	writeModFile(t, root, "module\tmyapp\n\ngo 1.22\n")
+
+	got, ok := modulePathOf(root)
+	if !ok || got != "myapp" {
+		t.Errorf("modulePathOf() = (%q, %v), want (\"myapp\", true)", got, ok)
+	}
+}
+
+func TestModulePathOfHandlesQuotedName(t *testing.T) {
+	root := t.TempDir()
+	writeModFile(t, root, "module \"myapp\"\n\ngo 1.22\n")
+
+	got, ok := modulePathOf(root)
+	if !ok || got != "myapp" {
+		t.Errorf("modulePathOf() = (%q, %v), want (\"myapp\", true)", got, ok)
+	}
+}
+
+func TestModulePathOfRejectsParenBlock(t *testing.T) {
+	root := t.TempDir()
+	writeModFile(t, root, "module (\n\tmyapp\n)\n\ngo 1.22\n")
+
+	_, ok := modulePathOf(root)
+	if ok {
+		t.Errorf("modulePathOf() ok = true, want false（括号块形式不应该被当成有效模块名）")
+	}
+}
+
+// --- 以下验证单个文件解析失败不会中断整棵树的检查 ---
+
+// 单个文件解析失败不该让整棵树的检查中断——已经发现的违反照常报出来，
+// 解析失败的文件单独记录在 ParseFailures 里。
+func TestCheckLayersContinuesAfterParseFailure(t *testing.T) {
+	root := t.TempDir()
+	// 一个违反：domain 引用了框架包。
+	writeGo(t, root, "internal/user/domain/user.go",
+		"context", "github.com/Kline-x/gokit/component/sqldb")
+	// 另一个模块下，一个语法不合法的 .go 文件（不在 testdata 里，真实场景
+	// 里可能是生成中或模板残留的文件）。
+	badPath := filepath.Join(root, "internal/order/application/broken.go")
+	if err := os.MkdirAll(filepath.Dir(badPath), 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	if err := os.WriteFile(badPath, []byte("这不是合法的 Go 代码 {{{"), 0o600); err != nil {
+		t.Fatalf("写文件失败: %v", err)
+	}
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v（单个文件解析失败不该让整棵树的检查中断）", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1（已发现的违反不该因为别处解析失败而丢失）：%v", len(got.Violations), got.Violations)
+	}
+	if len(got.ParseFailures) != 1 {
+		t.Fatalf("ParseFailures 数 = %d, want 1：%v", len(got.ParseFailures), got.ParseFailures)
+	}
+	wantFile := "internal/order/application/broken.go"
+	if got.ParseFailures[0].File != wantFile {
+		t.Errorf("ParseFailures[0].File = %q, want %q", got.ParseFailures[0].File, wantFile)
 	}
 }
