@@ -1,0 +1,15 @@
+log:
+  level: info
+  format: json
+  output: stdout
+
+grpc:
+  name: "grpcserver"
+  addr: ":9000"
+  shutdown_timeout: 10s
+  enable_reflection: true
+
+db:
+  driver: sqlite
+  dsn: "file:greeter.db"
+  max_open_conns: 10
