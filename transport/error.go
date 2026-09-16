@@ -13,9 +13,6 @@ import (
 	"maps"
 )
 
-// CodeInternal 是未知错误的兜底码。完整的错误码表见 code.go。
-const CodeInternal = 500
-
 // Error 是框架统一的错误类型。
 //
 // Code 决定协议层的状态（HTTP 状态码、gRPC status code），
