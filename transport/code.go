@@ -2,8 +2,9 @@ package transport
 
 import "errors"
 
-// 框架的错误码表。取值刻意与 HTTP 状态码对齐，方便直觉理解；
-// 映射到 gRPC status 的规则在 component/grpcserver 里。
+// 框架的错误码表。取值大体沿用 HTTP 状态码，方便一眼看懂；
+// 但并非逐个严格对应，看到码值时以下面每一条的注释为准。
+// 映射到 gRPC status 的规则是另一张表，在 component/grpcserver 里。
 const (
 	// CodeOK 表示没有错误。
 	CodeOK = 0
@@ -18,6 +19,10 @@ const (
 	// CodeAlreadyExists 表示资源已存在，通常出现在创建场景。
 	CodeAlreadyExists = 409
 	// CodeFailedPrecondition 表示当前状态不允许该操作。
+	//
+	// 取 422 而不是 HTTP 里同名的 412：412 专指条件请求（If-Match 之类）
+	// 失败，用它表达业务状态问题会误导缓存与客户端；422 才是多数 REST API
+	// 用来表达「请求本身没毛病，但业务状态不允许」的码。
 	CodeFailedPrecondition = 422
 	// CodeRateLimited 表示触发了限流。
 	CodeRateLimited = 429

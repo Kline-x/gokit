@@ -2,6 +2,7 @@ package transport
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -44,6 +45,11 @@ func TestCodeReadsThroughWrapping(t *testing.T) {
 	wrapped := errors.Join(errors.New("外层"), err)
 	if got := Code(wrapped); got != CodeNotFound {
 		t.Errorf("包装后 Code() = %d, want %d", got, CodeNotFound)
+	}
+
+	// fmt.Errorf 的单层包装也必须能穿透。
+	if got := Code(fmt.Errorf("查询用户失败: %w", err)); got != CodeNotFound {
+		t.Errorf("fmt.Errorf 包装后 Code() = %d, want %d", got, CodeNotFound)
 	}
 }
 
