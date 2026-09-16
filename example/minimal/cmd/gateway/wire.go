@@ -11,9 +11,15 @@ import (
 
 // initApp 装配入口服务。
 //
-// 与 cmd/monolith 的装配比一比，差别只有两处：
-// 这里用 greeter.RemoteSet 而不是 LocalSet，以及多提供一条 gRPC 连接。
-// domain、application、interfaces 三层的代码一行没动。
+// 与 cmd/monolith 的装配比一比，核心差异只有一处：这里用 greeter.RemoteSet
+// 而不是 LocalSet，于是问候能力从「本进程实现」变成了「调远程」。
+//
+// 其余的出入都是这个选择的后果：既然实现不在本进程，就不需要数据库、
+// 不需要事务能力的绑定，转而需要一条到下游的连接；本服务也不对外提供 gRPC，
+// 所以 gRPC 服务端那套装配整个不在。逐行 diff 会看到七处不同，
+// 但它们全是「换了一个 ProviderSet」推导出来的，不是七个独立决定。
+//
+// 真正的重点是没变的部分：domain、application、interfaces 三层一行没动。
 func initApp(cfg Config) (*Bundle, error) {
 	panic(wire.Build(
 		provideLogConfig,
