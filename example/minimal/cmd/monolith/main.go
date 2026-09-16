@@ -125,7 +125,7 @@ func provideComponents(
 
 func main() {
 	var configPath string
-	flag.StringVar(&configPath, "config", "config.yaml", "配置文件路径")
+	flag.StringVar(&configPath, "config", "configs/monolith.yaml", "配置文件路径")
 	flag.Parse()
 
 	cfg := defaultConfig()
