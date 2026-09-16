@@ -119,10 +119,3 @@ func binaryCheck(name, purpose string) check {
 	}
 	return check{name: name, ok: true, detail: path}
 }
-
-// CheckLayers 由 Task 2 实现。
-func CheckLayers(dir string) ([]violation, error) { return nil, nil }
-
-type violation struct{}
-
-func (v violation) String() string { return "" }
