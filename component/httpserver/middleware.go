@@ -131,6 +131,10 @@ func (r *statusRecorder) ReadFrom(src io.Reader) (int64, error) {
 //
 // 它依赖包装 ResponseWriter 来获取状态码，因此必须是 Recover 与 Timeout
 // 之外的那一层，详见 Chain 的说明。
+//
+// 与 gRPC 侧不同，http.Handler 不返回 error，所以这里记不到错误详情。
+// 业务层若要保留底层原因，应在写出响应之前自行记一条日志——
+// transport.RenderError 只会把泛化描述发给客户端。
 func RequestLog(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

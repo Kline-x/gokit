@@ -98,8 +98,10 @@ func (e *Error) clone() *Error {
 
 // FromError 把任意 error 归一成 *Error。
 //
-// 已经是 *Error 的原样返回；其余一律归为内部错误，并把原始错误挂在
-// cause 上，好让调用方仍能用 errors.Is 找到它。nil 返回 nil。
+// 已经是 *Error 的原样返回；其余一律归为内部错误，Message 给一句泛化
+// 描述而不是原始错误文本——Message 是客户端可见的，原文可能带表名、
+// 驱动细节等内情。原始错误只挂在 cause 上，好让调用方仍能用 errors.Is
+// 找到它，但不会跨进程传递。nil 返回 nil。
 func FromError(err error) *Error {
 	if err == nil {
 		return nil
@@ -108,5 +110,8 @@ func FromError(err error) *Error {
 	if errors.As(err, &e) {
 		return e
 	}
-	return New(CodeInternal, "INTERNAL", err.Error()).WithCause(err)
+	// 未归类的错误一律给一句泛化描述：Message 是客户端可见的，
+	// 把底层错误原文塞进去会泄漏表名、驱动细节之类的内情。
+	// 真正的原因挂在 cause 上，只在进程内可达，由服务端的日志中间件记录。
+	return New(CodeInternal, "INTERNAL", "内部错误").WithCause(err)
 }

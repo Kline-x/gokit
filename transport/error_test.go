@@ -3,6 +3,7 @@ package transport
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -128,5 +129,22 @@ func TestErrorIsStillMatchesWhenReceiverIsWrapped(t *testing.T) {
 
 	if !errors.Is(wrapped, sentinel) {
 		t.Error("接收方被包装时 errors.Is 仍应匹配")
+	}
+}
+
+func TestFromErrorDoesNotLeakUnknownErrorText(t *testing.T) {
+	// Message 是客户端可见的，底层错误原文不能进去。
+	plain := errors.New("dial tcp 10.0.0.1:3306: connect: connection refused")
+	got := FromError(plain)
+
+	if strings.Contains(got.Message, "10.0.0.1") {
+		t.Errorf("Message = %q，泄漏了底层错误原文", got.Message)
+	}
+	if got.Message == "" {
+		t.Error("Message 不应为空，客户端需要一句能看的描述")
+	}
+	// 原因仍要在进程内可达，否则排障就断了。
+	if !errors.Is(got, plain) {
+		t.Error("原始错误应当仍可被 errors.Is 找到")
 	}
 }

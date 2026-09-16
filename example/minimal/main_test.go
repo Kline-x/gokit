@@ -172,10 +172,13 @@ func TestGreetOverGRPC(t *testing.T) {
 	}
 }
 
-// 错误语义一致性验证：空名字在 HTTP 与 gRPC 两条协议上都必须是「参数不合法」，
-// 而不是内部错误。Go 1.22 的 ServeMux 通配符段不匹配空路径段，
-// HTTP 侧无法构造出空名字请求，这是路由层面的事实，本测试只在 gRPC 侧验证。
-func TestGreetErrorSemanticsMatchAcrossProtocols(t *testing.T) {
+// TestGreetInvalidArgumentOverGRPC 验证参数不合法的错误在 gRPC 侧
+// 以「参数不合法」而非内部错误的形式抵达调用方，且 Reason 能被还原。
+//
+// 只测 gRPC 一侧：Go 1.22 的 ServeMux 通配符段不匹配空路径段，
+// 所以 /greet/{name} 这条路由根本构造不出空名字的请求。
+// 两条协议的错误码映射本身在 transport 与两个 gRPC 组件的单元测试里已经对称验证过。
+func TestGreetInvalidArgumentOverGRPC(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.HTTP.Addr = "127.0.0.1:0"
 	cfg.GRPC.Addr = "127.0.0.1:0"

@@ -146,3 +146,38 @@ func TestGRPCCodeFallsBackToInternal(t *testing.T) {
 		t.Errorf("GRPCCode(CodeOK) = %v, want OK", got)
 	}
 }
+
+func TestRequestLogRecordsErrorDetail(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	boom := errors.New("dial tcp 10.0.0.1:3306: connect: connection refused")
+	_, err := RequestLog(logger)(context.Background(), nil, unaryInfo(),
+		func(context.Context, any) (any, error) { return nil, boom })
+	if err == nil {
+		t.Fatal("handler 的错误应当原样返回")
+	}
+
+	if !strings.Contains(buf.String(), "10.0.0.1") {
+		t.Errorf("日志里没有错误详情，排障会断线；实际日志=%q", buf.String())
+	}
+}
+
+func TestRequestLogOmitsErrorFieldOnSuccess(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	_, err := RequestLog(logger)(context.Background(), nil, unaryInfo(),
+		func(context.Context, any) (any, error) { return "ok", nil })
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+
+	var entry map[string]any
+	if jsonErr := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry); jsonErr != nil {
+		t.Fatalf("日志不是合法 JSON: %v, 内容=%q", jsonErr, buf.String())
+	}
+	if _, has := entry["error"]; has {
+		t.Errorf("成功的调用不该带 error 字段，实际日志=%v", entry)
+	}
+}

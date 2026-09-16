@@ -96,11 +96,17 @@ func RequestLog(logger *slog.Logger) grpc.UnaryServerInterceptor {
 
 		resp, err := handler(ctx, req)
 
-		logger.InfoContext(ctx, "grpc 调用",
+		attrs := []any{
 			slog.String("method", info.FullMethod),
 			slog.String("code", status.Code(err).String()),
 			slog.Duration("latency", time.Since(begin)),
-		)
+		}
+		if err != nil {
+			// 这里记的是未经翻译的原始错误，包含 transport.Error 挂在 cause 上的
+			// 底层原因。客户端只会收到泛化描述，排障要靠这一行。
+			attrs = append(attrs, slog.Any("error", err))
+		}
+		logger.InfoContext(ctx, "grpc 调用", attrs...)
 		return resp, err
 	}
 }
