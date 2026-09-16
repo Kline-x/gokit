@@ -30,7 +30,7 @@
    - `config` 只允许 `gopkg.in/yaml.v3`。
    - 各组件包只允许其直接对应的客户端库，加 `github.com/google/wire`。`grpcserver` 与 `grpcclient` 可以用 `google.golang.org/grpc` 与 `google.golang.org/protobuf`。
    - 任何组件都不得 import `app`，按方法集结构性地满足生命周期契约。
-5. **组件之间互不依赖**，例外有两条：`component/log` 是横切关注点，谁都可以 import；本计划新增第二条例外 —— `component/grpcserver` 与 `component/grpcclient` 可以 import `transport`，因为错误语义本身就是通信契约的一部分。
+5. **组件之间互不依赖**，例外有两条：`component/log` 是横切关注点，谁都可以 import；**任何组件都可以 import `transport`** —— 它不是组件，是通信契约层，错误语义与响应形状本来就属于协议边界。（原先只对两个 gRPC 组件开这个口子，后来发现 `httpserver` 的 recover 与超时响应不走统一信封会让客户端 SDK 解码失败，于是推广成通则。`transport` 只依赖标准库，开这个口子不引入任何额外依赖。）
 6. **文档、目录名、注释、提交信息中不出现 "DDD" 字样**，统一说「分层」「领域模型」。
 7. **注释与提交信息用中文**。提交用 `git -c user.name=xuyang -c user.email=xuyang@89you.com commit`，信息末尾加一行 `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`。**这行是字面文本，执行者不要换成自己的模型名。**
 8. **配置结构体只用值类型字段，不用指针字段**，且第一个字段是 `Name string \`yaml:"name"\``，默认值取组件名。`config.Validate` 会在 `Load` 时拒绝指针字段与展开后无可寻址叶子的结构体字段。
