@@ -203,9 +203,17 @@ func TestServiceBehavesIdenticallyLocalAndRemote(t *testing.T) {
 			}
 
 			// 五、内部故障不能把底层细节带给调用方。
-			// 关掉库，再问一次：应当拿到内部错误码与一句泛化描述，
-			// 而不是驱动或 SQL 的原文。这一条在本地与远程两边都必须成立 ——
-			// 远程那边尤其要紧，因为泄漏出去的是给外部客户端看的。
+			// 关掉库，再问一次。
+			//
+			// 检查的是「假如要发给客户端，会发出去什么」，也就是 transport.FromError
+			// 归一之后的 Message —— HTTP 的 RenderError 与 gRPC 的 ErrorMapper
+			// 都是经它产出对外内容的。
+			//
+			// 刻意不去查 err.Error()：那两边本来就不一样，而且是应该不一样的。
+			// 本地拿到的是完整的错误链（同一个进程内，没跨信任边界，留着好排障），
+			// 远程拿到的是已经在服务端脱过敏、又在客户端还原出来的那一个。
+			// 框架承诺的是 Code、Reason、Metadata 与 errors.Is 一致，
+			// 不是错误字符串一致 —— 调用方本来就不该去解析 Error()。
 			if err := f.db.Stop(ctx); err != nil {
 				t.Fatalf("关闭数据库失败: %v", err)
 			}
@@ -217,9 +225,11 @@ func TestServiceBehavesIdenticallyLocalAndRemote(t *testing.T) {
 			if got := transport.Code(err); got != transport.CodeInternal {
 				t.Errorf("Code = %d, want %d", got, transport.CodeInternal)
 			}
+
+			outward := transport.FromError(err).Message
 			for _, leak := range []string{"sql", "database", "greetings", "SELECT", "INSERT"} {
-				if strings.Contains(err.Error(), leak) {
-					t.Errorf("错误里漏出了底层细节 %q: %v", leak, err)
+				if strings.Contains(outward, leak) {
+					t.Errorf("要发给客户端的描述里漏出了底层细节 %q: %q", leak, outward)
 				}
 			}
 		})
