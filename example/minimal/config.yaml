@@ -1,0 +1,14 @@
+log:
+  level: info
+  format: json
+  output: stdout
+
+http:
+  addr: ":8080"
+  read_timeout: 15s
+  write_timeout: 15s
+
+db:
+  driver: sqlite
+  dsn: "file:minimal.db"
+  max_open_conns: 10
