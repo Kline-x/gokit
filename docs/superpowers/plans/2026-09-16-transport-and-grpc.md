@@ -903,11 +903,15 @@ git commit -m "通信：HTTP 统一响应与错误码到状态码的映射"
 - Consumes: 无
 - Produces: `make tools` 能装好两个 protoc 插件；`make proto` 能把示例的 proto 生成到位
 
-- [ ] **Step 1: 引入依赖**
+- [ ] **Step 1: 引入依赖（版本必须锁定，不要用 @latest）**
 
 ```bash
-wsl -u gaore bash -lc 'cd /mnt/e/code/AI/vibCoding/gokit && /home/gaore/sdk/go/bin/go get google.golang.org/grpc && /home/gaore/sdk/go/bin/go get google.golang.org/protobuf && /home/gaore/sdk/go/bin/go mod tidy'
+wsl -u gaore bash -lc 'cd /mnt/e/code/AI/vibCoding/gokit && /home/gaore/sdk/go/bin/go get google.golang.org/grpc@v1.65.0 && /home/gaore/sdk/go/bin/go get google.golang.org/protobuf@v1.35.2 && /home/gaore/sdk/go/bin/go mod tidy'
 ```
+
+**为什么锁版本**：`grpc@latest`（v1.83 一线）自身的 `go` 指令是 1.25，一旦引入就会把本模块的 `go 1.22` 顶上去，而降低版本下限正是上一版评审专门修过的事。v1.65.0 与 v1.35.2 只要求 go1.21，且已包含本计划用到的全部 API（`grpc.NewClient` 自 v1.63 起提供）。
+
+这只是**下限**：消费者的项目想用更新的 grpc，自己 require 即可，Go 的最小版本选择会选高的那个。锁低反而保住了兼容面。后续任何任务再引入这两个依赖时，一律带上同样的版本号。
 
 - [ ] **Step 2: 安装 protoc 插件**
 
