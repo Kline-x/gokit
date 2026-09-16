@@ -202,6 +202,31 @@ func TestServiceBehavesIdenticallyLocalAndRemote(t *testing.T) {
 				t.Errorf("Metadata = %v, want field=name", te.Metadata)
 			}
 
+			// 四、取消与超时在两边必须给出同样的判断依据。
+			// 调用方写 errors.Is(err, context.Canceled) 是很常见的做法，
+			// 拆分之后它不能悄悄失效。
+			canceledCtx, cancel := context.WithCancel(ctx)
+			cancel()
+			if _, err := svc.Greet(canceledCtx, application.GreetRequest{Name: "canceled"}); err == nil {
+				t.Error("上下文已取消，Greet 不该成功")
+			} else if !errors.Is(err, context.Canceled) {
+				t.Errorf("errors.Is 认不出 context.Canceled: %v", err)
+			}
+
+			expiredCtx, stop := context.WithTimeout(ctx, time.Nanosecond)
+			defer stop()
+			time.Sleep(time.Millisecond)
+			if _, err := svc.Greet(expiredCtx, application.GreetRequest{Name: "expired"}); err == nil {
+				t.Error("上下文已超时，Greet 不该成功")
+			} else {
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("errors.Is 认不出 context.DeadlineExceeded: %v", err)
+				}
+				if got := transport.Code(err); got != transport.CodeTimeout {
+					t.Errorf("超时的 Code = %d, want %d", got, transport.CodeTimeout)
+				}
+			}
+
 			// 五、内部故障不能把底层细节带给调用方。
 			// 关掉库，再问一次。
 			//
