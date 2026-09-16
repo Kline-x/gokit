@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Kline-x/gokit/component/log"
+	"github.com/Kline-x/gokit/transport"
 )
 
 func TestChainAppliesMiddlewareOutsideIn(t *testing.T) {
@@ -264,5 +265,57 @@ func TestRequestLogReportsHijackedConnectionSeparately(t *testing.T) {
 	}
 	if entry["msg"] != "http 连接已被接管" {
 		t.Errorf("msg = %v, want 「http 连接已被接管」", entry["msg"])
+	}
+}
+
+func TestRecoverWritesEnvelope(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	h := Recover(logger)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("panic 响应不是合法 JSON: %v, 内容=%q", err, rec.Body.String())
+	}
+	if body["code"] != float64(transport.CodeInternal) {
+		t.Errorf("code = %v, want %d", body["code"], transport.CodeInternal)
+	}
+	if strings.Contains(rec.Body.String(), "boom") {
+		t.Errorf("响应体泄漏了 panic 内容: %s", rec.Body.String())
+	}
+	if !strings.Contains(buf.String(), "boom") {
+		t.Error("日志里没有 panic 内容，排障会断线")
+	}
+}
+
+func TestTimeoutWritesEnvelope(t *testing.T) {
+	h := Timeout(20 * time.Millisecond)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/slow", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("超时响应不是合法 JSON: %v, 内容=%q", err, rec.Body.String())
+	}
+	if body["reason"] != "REQUEST_TIMEOUT" {
+		t.Errorf("reason = %v", body["reason"])
 	}
 }

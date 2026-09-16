@@ -90,8 +90,9 @@ func provideServiceRegistrars(greeter *interfaces.GRPCHandler) []grpcserver.Serv
 	return []grpcserver.ServiceRegistrar{greeter}
 }
 
-// provideGRPCServer 把 App.Fatal 接给服务，并装上三个拦截器。
-// 顺序与 HTTP 侧一致：RequestLog 在最外层，其次 Recover，最内层是错误映射。
+// provideGRPCServer 把 App.Fatal 接给服务。
+// 只需要传 RequestLog：Recover 与 ErrorMapper 由 grpcserver 默认装在最内层，
+// 因此这里传进去的天然包在它们外面，RequestLog 看到的正是已经翻译过的状态码。
 func provideGRPCServer(
 	cfg grpcserver.Config,
 	services []grpcserver.ServiceRegistrar,
@@ -100,10 +101,9 @@ func provideGRPCServer(
 ) *grpcserver.Server {
 	return grpcserver.New(cfg, services,
 		grpcserver.WithFatal(a.Fatal),
+		grpcserver.WithLogger(logger.Logger),
 		grpcserver.WithUnaryInterceptor(
 			grpcserver.RequestLog(logger.Logger),
-			grpcserver.Recover(logger.Logger),
-			grpcserver.ErrorMapper(),
 		),
 	)
 }

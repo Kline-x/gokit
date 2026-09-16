@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kline-x/gokit/component/log"
+	"github.com/Kline-x/gokit/transport"
 )
 
 // Chain 把中间件按传入顺序由外向内套在 h 上：
@@ -43,7 +45,13 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 					slog.String("path", r.URL.Path),
 					slog.String("stack", string(debug.Stack())),
 				)
-				w.WriteHeader(http.StatusInternalServerError)
+				// 客户端只拿到一句泛化描述，panic 的内容与堆栈只进日志。
+				// 走统一信封是为了让按信封解码的客户端不至于收到一个空响应体。
+				if renderErr := transport.RenderError(w,
+					transport.Internal("PANIC", "内部错误")); renderErr != nil {
+					logger.ErrorContext(r.Context(), "写出 panic 响应失败",
+						slog.Any("error", renderErr))
+				}
 			}()
 			next.ServeHTTP(w, r)
 		})
@@ -169,6 +177,24 @@ func RequestLog(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+// timeoutBody 是超时响应的信封文本，进程启动时算一次。
+//
+// 注意两处标准库带来的限制：http.TimeoutHandler 把状态码写死成 503，
+// 所以这里的 code 取 CodeUnavailable 而不是 CodeTimeout，免得状态码与信封自相矛盾；
+// 它也不会替我们设 Content-Type，因此这条响应的类型由 Go 的内容嗅探决定，
+// 不是 application/json。按信封解码的客户端不受影响，按 Content-Type 分支的会。
+var timeoutBody = func() string {
+	buf, err := json.Marshal(transport.Response{
+		Code:    transport.CodeUnavailable,
+		Reason:  "REQUEST_TIMEOUT",
+		Message: "请求处理超时",
+	})
+	if err != nil {
+		return `{"code":503,"reason":"REQUEST_TIMEOUT","message":"请求处理超时"}`
+	}
+	return string(buf)
+}()
+
 // Timeout 给处理链加上整体超时，超时返回 503。
 //
 // 超时响应由 http.TimeoutHandler 直接写出，不经过外层包装，
@@ -177,8 +203,13 @@ func RequestLog(logger *slog.Logger) func(http.Handler) http.Handler {
 // 另需注意：http.TimeoutHandler 会把整个响应缓冲起来，它交给下游的 writer
 // 既不实现 Flusher 也不实现 Hijacker。因此只要用了 Timeout，
 // 它内层的 SSE 流式输出与 WebSocket 升级都会失效。
+//
+// 另外两处标准库带来的限制：http.TimeoutHandler 把状态码写死成 503，
+// 所以 timeoutBody 里的 code 取 CodeUnavailable 而不是 CodeTimeout，免得状态码与信封自相矛盾；
+// 它也不会替我们设 Content-Type，因此这条响应的类型由 Go 的内容嗅探决定，不是 application/json。
+// 按信封解码的客户端不受影响，按 Content-Type 分支的会。
 func Timeout(d time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return http.TimeoutHandler(next, d, "请求处理超时")
+		return http.TimeoutHandler(next, d, timeoutBody)
 	}
 }
