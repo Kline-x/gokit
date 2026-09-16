@@ -299,7 +299,7 @@ go install github.com/Kline-x/gokit/cmd/gokit@latest
 4. 组件：`grpcserver`、`grpcclient`，跑通同一个 Service 双协议暴露。（已完成，见 `docs/superpowers/plans/2026-09-16-transport-and-grpc.md`）
 5. `transport`：错误码 + 统一响应。（已完成，见 `docs/superpowers/plans/2026-09-16-transport-and-grpc.md`）
 6. 脚手架 CLI + 模板 + 示例模块。
-7. 拆分演示：把示例模块从单体切到独立进程，只改 `wire.go`，过程写成文档。
+7. 拆分演示：把示例模块从单体切到独立进程，只改 `wire.go`，过程写成文档。（已完成，见 `docs/superpowers/plans/2026-09-16-split-demo.md`）
 8. 可选组件：`redis`、`cron`、`eventbus`。
 
 规模说明：以上八步不适合塞进同一份实施计划。第一份实施计划覆盖第 1 至 3 步，产出「内核 + 日志 + HTTP + SQL 的最小可用单体」；其余各步在其完成后各自立计划。

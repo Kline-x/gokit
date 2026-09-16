@@ -20,13 +20,10 @@ import (
 
 // Injectors from wire.go:
 
-// initApp 由 wire 在编译期生成实现：按依赖关系把各组件与业务模块装配起来。
+// initApp 装配问候服务。
 //
-// 本文件与 provideComponents 一起构成组合根。把 greeter.LocalSet 换成将来的
-// RemoteSet，就能把该模块切成远程调用；同时要改的还有 provideComponents 的入参，
-// 以及 wire.Build 里那些只为这个模块服务、换成远程后不再需要的共享基础设施。
-// 业务代码——domain、application、interfaces 三层——一行都不用动，
-// 这才是这套分层想换来的东西。
+// 用的是 greeter.LocalSet —— 本进程就是这个模块的家，
+// 仓储、建表、业务实现全在这里。
 func initApp(cfg Config) (*Bundle, error) {
 	config := provideLogConfig(cfg)
 	logger, err := log.New(config)
@@ -34,7 +31,7 @@ func initApp(cfg Config) (*Bundle, error) {
 		return nil, err
 	}
 	app := provideApp(logger)
-	httpserverConfig := provideHTTPConfig(cfg)
+	grpcserverConfig := provideGRPCConfig(cfg)
 	sqldbConfig := provideDBConfig(cfg)
 	db, err := sqldb.New(sqldbConfig)
 	if err != nil {
@@ -42,19 +39,14 @@ func initApp(cfg Config) (*Bundle, error) {
 	}
 	greetingRepo := infrastructure.NewGreetingRepo(db)
 	localService := application.NewLocalService(greetingRepo, db)
-	httpHandler := interfaces.NewHTTPHandler(localService)
-	handler := provideHandler(logger, httpHandler)
-	server := provideHTTPServer(httpserverConfig, handler, app)
-	grpcserverConfig := provideGRPCConfig(cfg)
 	grpcHandler := interfaces.NewGRPCHandler(localService)
 	v := provideServiceRegistrars(grpcHandler)
-	grpcserverServer := provideGRPCServer(grpcserverConfig, v, logger, app)
+	server := provideGRPCServer(grpcserverConfig, v, logger, app)
 	migrator := infrastructure.NewMigrator(db)
-	v2 := provideComponents(logger, db, migrator, server, grpcserverServer)
+	v2 := provideComponents(logger, db, migrator, server)
 	bundle := &Bundle{
 		App:        app,
-		HTTP:       server,
-		GRPC:       grpcserverServer,
+		GRPC:       server,
 		Components: v2,
 	}
 	return bundle, nil

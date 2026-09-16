@@ -3,6 +3,7 @@ package grpcclient
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,10 +99,17 @@ func TestNewRejectsEmptyTarget(t *testing.T) {
 }
 
 func TestErrorRestorerRebuildsTransportError(t *testing.T) {
-	restorer := ErrorRestorer()
+	// 真实的 gokit 服务端（ErrorMapper）总是带上 ErrorInfo detail，
+	// 这里照实模拟，验证 Code/Reason/Message 三者都能还原正确。
+	st, detailErr := status.New(codes.NotFound, "USER_NOT_FOUND: 用户不存在").
+		WithDetails(&errdetails.ErrorInfo{Reason: "USER_NOT_FOUND", Domain: "gokit"})
+	if detailErr != nil {
+		t.Fatalf("构造 detail 失败: %v", detailErr)
+	}
 
+	restorer := ErrorRestorer()
 	invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
-		return status.Error(codes.NotFound, "USER_NOT_FOUND: 用户不存在")
+		return st.Err()
 	}
 
 	err := restorer(context.Background(), "/greeter.v1.Greeter/Greet", nil, nil, nil, invoker)
@@ -122,6 +130,8 @@ func TestErrorRestorerRebuildsTransportError(t *testing.T) {
 }
 
 func TestErrorRestorerHandlesMessageWithoutReason(t *testing.T) {
+	// 没有 detail：不是 gokit 服务端产生的错误，Message 必须用安全的
+	// 泛化描述，不能采用下游原文；Code 的翻译不受影响。
 	restorer := ErrorRestorer()
 
 	invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
@@ -137,8 +147,14 @@ func TestErrorRestorerHandlesMessageWithoutReason(t *testing.T) {
 	if te.Code != transport.CodeUnavailable {
 		t.Errorf("Code = %d, want %d", te.Code, transport.CodeUnavailable)
 	}
-	if te.Message != "连接被拒绝" {
-		t.Errorf("Message = %q, want %q", te.Message, "连接被拒绝")
+	if te.Reason != "" {
+		t.Errorf("Reason = %q，没有 detail 时不该有业务 Reason", te.Reason)
+	}
+	if te.Message == "连接被拒绝" {
+		t.Errorf("Message = %q，不带 detail 的原文不该原样对外", te.Message)
+	}
+	if !strings.Contains(err.Error(), "连接被拒绝") {
+		t.Error("原始错误应当仍挂在 cause 上，供排障使用")
 	}
 }
 
@@ -279,6 +295,10 @@ func TestErrorRestorerPrefersDetailOverMessageSplitting(t *testing.T) {
 }
 
 func TestErrorRestorerFallsBackToMessageWhenNoDetail(t *testing.T) {
+	// 没有 detail 意味着这条错误不是经过 gokit ErrorMapper 脱敏的，
+	// 哪怕文本看起来像 "REASON: 描述"，也不能再当成业务 Reason 采信——
+	// 那正是漏洞所在：一条精心构造的下游文本能借着这条路径把 Reason
+	// 伪造出来。没有 detail 就该没有 Reason、没有 Metadata。
 	restorer := ErrorRestorer()
 	invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
 		return status.Error(codes.NotFound, "USER_NOT_FOUND: 用户不存在")
@@ -290,8 +310,8 @@ func TestErrorRestorerFallsBackToMessageWhenNoDetail(t *testing.T) {
 	if !errors.As(err, &te) {
 		t.Fatalf("未能还原成 *transport.Error: %v", err)
 	}
-	if te.Reason != "USER_NOT_FOUND" {
-		t.Errorf("Reason = %q，没有 detail 时应当退回拆文本", te.Reason)
+	if te.Reason != "" {
+		t.Errorf("Reason = %q，没有 detail 时不该有业务 Reason", te.Reason)
 	}
 	if len(te.Metadata) != 0 {
 		t.Errorf("Metadata = %v，没有 detail 时应当为空", te.Metadata)
@@ -314,7 +334,73 @@ func TestErrorRestorerDoesNotFabricateReasonFromGRPCProse(t *testing.T) {
 	if te.Reason != "" {
 		t.Errorf("Reason = %q，gRPC 自己的错误文本不该被当成业务 Reason", te.Reason)
 	}
-	if te.Message != "last connection error: connection refused" {
-		t.Errorf("Message = %q，整段文本应当原样保留", te.Message)
+	// 没有 ErrorInfo detail：这条错误没有经过任何脱敏，Message 不能采用原文，
+	// 应当换成一句泛化描述，原文只挂在 cause 上。
+	if te.Message == "last connection error: connection refused" {
+		t.Errorf("Message = %q，不带 detail 的原文不该原样对外", te.Message)
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Error("原始错误应当仍挂在 cause 上，供排障使用")
+	}
+}
+
+func TestErrorRestorerDoesNotLeakUnsanitisedStatusText(t *testing.T) {
+	// gRPC 自己产生的传输层故障没经过任何脱敏，文本里常带下游地址。
+	// Message 是直接发给客户端的字段，不能采用这段原文。
+	restorer := ErrorRestorer()
+	raw := `connection error: desc = "transport: Error while dialing: dial tcp 10.1.2.3:9000: connect: connection refused"`
+
+	invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+		return status.Error(codes.Unavailable, raw)
+	}
+
+	err := restorer(context.Background(), "/x/y", nil, nil, nil, invoker)
+
+	var te *transport.Error
+	if !errors.As(err, &te) {
+		t.Fatalf("未能还原成 *transport.Error: %v", err)
+	}
+	for _, leak := range []string{"10.1.2.3", "dial tcp", "transport: Error"} {
+		if strings.Contains(te.Message, leak) {
+			t.Errorf("Message 里漏出了 %q: %q", leak, te.Message)
+		}
+	}
+	// 原文不能丢，它要进服务端日志。
+	if !strings.Contains(err.Error(), "10.1.2.3") {
+		t.Error("原始错误应当仍挂在 cause 上，供排障使用")
+	}
+}
+
+func TestErrorRestorerCarriesContextSentinels(t *testing.T) {
+	cases := []struct {
+		name     string
+		code     codes.Code
+		sentinel error
+		reason   string
+	}{
+		{"canceled", codes.Canceled, context.Canceled, "CANCELED"},
+		{"deadline", codes.DeadlineExceeded, context.DeadlineExceeded, "DEADLINE_EXCEEDED"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			restorer := ErrorRestorer()
+			invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+				return status.Error(tc.code, "随便一段下游文本")
+			}
+
+			err := restorer(context.Background(), "/x/y", nil, nil, nil, invoker)
+
+			if !errors.Is(err, tc.sentinel) {
+				t.Errorf("errors.Is 认不出 %v：%v", tc.sentinel, err)
+			}
+			var te *transport.Error
+			if !errors.As(err, &te) {
+				t.Fatalf("未能还原成 *transport.Error: %v", err)
+			}
+			if te.Reason != tc.reason {
+				t.Errorf("Reason = %q, want %q", te.Reason, tc.reason)
+			}
+		})
 	}
 }

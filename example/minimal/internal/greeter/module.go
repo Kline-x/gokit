@@ -1,7 +1,10 @@
 // Package greeter 是问候模块的装配入口。
 //
 // 模块对外只暴露两样东西：application.Service 接口，以及这里的装配集合。
-// 模块独立成服务时，把 internal/greeter 整个目录搬走即可。
+// 模块独立成服务时，internal/greeter 不是整个搬走：domain、application、
+// infrastructure 与 interfaces/grpc.go 跟着服务走；remote/ 留在调用方——
+// 它是调用方的出站适配器，本来就该跟调用方在一起；interfaces/http.go
+// 也留在调用方，因为调用方装配的是 RemoteSet，由它提供 HTTPHandler。
 package greeter
 
 import (
@@ -11,6 +14,7 @@ import (
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/domain"
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/infrastructure"
 	"github.com/Kline-x/gokit/example/minimal/internal/greeter/interfaces"
+	"github.com/Kline-x/gokit/example/minimal/internal/greeter/remote"
 )
 
 // LocalSet 是单体部署下的装配集合：Service 绑定到进程内实现。
@@ -32,4 +36,20 @@ var LocalSet = wire.NewSet(
 
 	interfaces.NewHTTPHandler,
 	interfaces.NewGRPCHandler,
+)
+
+// RemoteSet 是模块拆成独立服务后，**调用方**使用的装配集合。
+//
+// 它把 application.Service 绑到 gRPC 客户端实现上。与 LocalSet 相比：
+// 不需要仓储、不需要迁移、不需要数据库，因为那些都跟着服务走了；
+// 也不需要 gRPC 接口层，因为调用方不对外提供这个服务。
+// 需要的只有一条到下游的连接，由调用方在组合根里提供。
+//
+// 换掉 LocalSet 这件事，对 domain、application、interfaces 三层完全不可见——
+// 这正是这套分层想换来的东西。
+var RemoteSet = wire.NewSet(
+	remote.NewService,
+	wire.Bind(new(application.Service), new(*remote.Service)),
+
+	interfaces.NewHTTPHandler,
 )

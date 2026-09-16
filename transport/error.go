@@ -8,6 +8,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -122,6 +123,14 @@ func FromError(err error) *Error {
 	var e *Error
 	if errors.As(err, &e) {
 		return e
+	}
+	// 上下文的两个哨兵单独归类，好让同一次取消或超时在单体与拆分之后
+	// 给出同样的 Code 与 Reason —— gRPC 侧的 ErrorRestorer 对它们给的正是这一组。
+	if errors.Is(err, context.DeadlineExceeded) {
+		return New(CodeTimeout, "DEADLINE_EXCEEDED", "处理超时").WithCause(err)
+	}
+	if errors.Is(err, context.Canceled) {
+		return New(CodeInternal, "CANCELED", "调用已取消").WithCause(err)
 	}
 	// 未归类的错误一律给一句泛化描述：Message 是客户端可见的，
 	// 把底层错误原文塞进去会泄漏表名、驱动细节之类的内情。

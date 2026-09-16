@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -155,5 +156,29 @@ func TestFromErrorDoesNotLeakUnknownErrorText(t *testing.T) {
 	// 原因仍要在进程内可达，否则排障就断了。
 	if !errors.Is(got, plain) {
 		t.Error("原始错误应当仍可被 errors.Is 找到")
+	}
+}
+
+func TestFromErrorClassifiesContextSentinels(t *testing.T) {
+	deadline := FromError(fmt.Errorf("查询超时: %w", context.DeadlineExceeded))
+	if deadline.Code != CodeTimeout {
+		t.Errorf("超时的 Code = %d, want %d", deadline.Code, CodeTimeout)
+	}
+	if deadline.Reason != "DEADLINE_EXCEEDED" {
+		t.Errorf("超时的 Reason = %q", deadline.Reason)
+	}
+	if !errors.Is(deadline, context.DeadlineExceeded) {
+		t.Error("errors.Is 应当仍能认出 context.DeadlineExceeded")
+	}
+
+	canceled := FromError(fmt.Errorf("调用取消: %w", context.Canceled))
+	if canceled.Code != CodeInternal {
+		t.Errorf("取消的 Code = %d, want %d", canceled.Code, CodeInternal)
+	}
+	if canceled.Reason != "CANCELED" {
+		t.Errorf("取消的 Reason = %q", canceled.Reason)
+	}
+	if !errors.Is(canceled, context.Canceled) {
+		t.Error("errors.Is 应当仍能认出 context.Canceled")
 	}
 }

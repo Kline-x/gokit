@@ -77,7 +77,7 @@ func main() {
 
 ## 更多
 
-- 完整可运行示例：`example/minimal`（分层的问候模块，同一套服务同时通过 HTTP 与 gRPC 对外提供，数据落 SQLite）。
+- 完整可运行示例：`example/minimal`（分层的问候模块，同一套服务同时通过 HTTP 与 gRPC 对外提供，数据落 SQLite）。示例里同一套业务代码有两种部署形态：`cmd/monolith` 是单体，所有模块本地实现；`cmd/greeter` 与 `cmd/gateway` 是拆成两个进程后的形态，`greeter` 独占数据库、只对外提供 gRPC，`gateway` 对外提供 HTTP、通过 gRPC 调用 `greeter`。两种形态之间只是换了一个 ProviderSet（`LocalSet` 换成 `RemoteSet`），`domain`、`application`、`interfaces` 三层代码完全不动。拆分的实际过程见 `docs/superpowers/notes/splitting-a-module.md`。
 - 设计文档：`docs/superpowers/specs/2026-09-15-gokit-framework-design.md`。
 
 ## 本版不包含
