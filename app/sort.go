@@ -10,7 +10,7 @@ func sortComponents(cs []Component) ([]Component, error) {
 	index := make(map[string]int, len(cs))
 	for i, c := range cs {
 		if _, dup := index[c.Name()]; dup {
-			return nil, fmt.Errorf("组件名重复: %q", c.Name())
+			return nil, fmt.Errorf("app: 组件名重复: %q", c.Name())
 		}
 		index[c.Name()] = i
 	}
@@ -25,10 +25,10 @@ func sortComponents(cs []Component) ([]Component, error) {
 		for _, dep := range d.DependsOn() {
 			j, known := index[dep]
 			if !known {
-				return nil, fmt.Errorf("组件 %q 依赖了未注册的组件 %q", c.Name(), dep)
+				return nil, fmt.Errorf("app: 组件 %q 依赖了未注册的组件 %q", c.Name(), dep)
 			}
 			if j == i {
-				return nil, fmt.Errorf("组件 %q 依赖了自己", c.Name())
+				return nil, fmt.Errorf("app: 组件 %q 依赖了自己", c.Name())
 			}
 			indegree[i]++
 			dependents[j] = append(dependents[j], i)
@@ -46,7 +46,7 @@ func sortComponents(cs []Component) ([]Component, error) {
 			}
 		}
 		if picked < 0 {
-			return nil, fmt.Errorf("组件依赖存在循环，无法确定启动顺序")
+			return nil, fmt.Errorf("app: 组件依赖存在循环，无法确定启动顺序")
 		}
 		done[picked] = true
 		out = append(out, cs[picked])

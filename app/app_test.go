@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -28,6 +29,14 @@ func (f *fakeComponent) Stop(context.Context) error {
 	*f.events = append(*f.events, "stop:"+f.name)
 	return f.stopErr
 }
+
+// healthyComponent 在 fakeComponent 之上实现 HealthChecker，用于验证 App.Health。
+type healthyComponent struct {
+	fakeComponent
+	healthErr error
+}
+
+func (h *healthyComponent) Health(context.Context) error { return h.healthErr }
 
 func TestStartInRegistrationOrderAndStopInReverse(t *testing.T) {
 	var events []string
@@ -105,11 +114,13 @@ func TestStartAbortsWhenStoppedConcurrently(t *testing.T) {
 	)
 
 	err := a.Start(context.Background())
-	if err == nil {
-		t.Fatal("Start() error = nil, want 启动过程中被停止的错误")
+	if !errors.Is(err, errStoppedDuringStart) {
+		t.Fatalf("Start() error = %v, want errStoppedDuringStart", err)
 	}
 
 	// b 启动后必须被回收，c 不应再被启动。
+	// 注意这里不是严格逆序：b 是由 Start 自己回收的，而 a 是并发的 Stop 停的。
+	// 「严格逆序」只在没有 Start/Stop 并发交错时成立，这是该契约的已知例外。
 	want := []string{"start:a", "start:b", "stop:a", "stop:b"}
 	if !slices.Equal(events, want) {
 		t.Errorf("events = %v, want %v", events, want)
@@ -180,4 +191,100 @@ func TestStopAppliesStopTimeoutWhenContextHasNoDeadline(t *testing.T) {
 	if elapsed > time.Second {
 		t.Errorf("Stop() 耗时 %v，应在 stopTimeout 附近返回", elapsed)
 	}
+}
+
+func TestHealthAggregatesUnhealthyComponents(t *testing.T) {
+	var events []string
+	boom := errors.New("挂了")
+	a := New(WithSignals())
+	a.Register(
+		&fakeComponent{name: "plain", events: &events},
+		&healthyComponent{fakeComponent: fakeComponent{name: "ok", events: &events}},
+		&healthyComponent{fakeComponent: fakeComponent{name: "bad", events: &events}, healthErr: boom},
+	)
+
+	ctx := context.Background()
+	if err := a.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = a.Stop(ctx) })
+
+	err := a.Health(ctx)
+	if !errors.Is(err, boom) {
+		t.Fatalf("Health() error = %v, want 包含 boom", err)
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("错误信息 = %q, 应指出是 bad 组件", err.Error())
+	}
+	if strings.Contains(err.Error(), "plain") {
+		t.Errorf("错误信息 = %q, 未实现 HealthChecker 的组件不该出现", err.Error())
+	}
+}
+
+func TestHealthReturnsNilWhenAllHealthy(t *testing.T) {
+	var events []string
+	a := New(WithSignals())
+	a.Register(&healthyComponent{fakeComponent: fakeComponent{name: "ok", events: &events}})
+
+	ctx := context.Background()
+	if err := a.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = a.Stop(ctx) })
+
+	if err := a.Health(ctx); err != nil {
+		t.Errorf("Health() error = %v, want nil", err)
+	}
+}
+
+func TestDoneDeliversFatalError(t *testing.T) {
+	boom := errors.New("运行期崩了")
+	a := New(WithSignals())
+	a.Fatal(boom)
+
+	select {
+	case err := <-a.Done():
+		if !errors.Is(err, boom) {
+			t.Fatalf("Done() 收到 %v, want boom", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Done() 没有送出 Fatal 上报的错误")
+	}
+}
+
+func TestStartRejectsSecondCall(t *testing.T) {
+	var events []string
+	a := New(WithSignals())
+	a.Register(&fakeComponent{name: "a", events: &events})
+
+	ctx := context.Background()
+	if err := a.Start(ctx); err != nil {
+		t.Fatalf("first Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = a.Stop(ctx) })
+
+	if err := a.Start(ctx); err == nil {
+		t.Fatal("second Start() error = nil, want 重复启动错误")
+	}
+	if len(events) != 1 {
+		t.Errorf("events = %v, 第二次 Start 不应再启动任何组件", events)
+	}
+}
+
+func TestRegisterAfterStartPanics(t *testing.T) {
+	var events []string
+	a := New(WithSignals())
+
+	ctx := context.Background()
+	if err := a.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = a.Stop(ctx) })
+
+	defer func() {
+		if recover() == nil {
+			t.Error("Start 之后 Register 应当 panic")
+		}
+	}()
+	a.Register(&fakeComponent{name: "late", events: &events})
 }
