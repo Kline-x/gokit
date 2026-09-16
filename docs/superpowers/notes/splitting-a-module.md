@@ -117,6 +117,15 @@ func (s *Service) Greet(ctx context.Context, req application.GreetRequest) (appl
 判断方式在本地实现和远程实现下完全一致；错误字符串（`err.Error()`）不
 一致，调用方不应该去解析它。**
 
+取消与超时也算数——`ErrorRestorer` 会把 context 的哨兵挂回 cause 上，
+`FromError` 对本地那侧给出同样的 Code 与 Reason，所以
+`errors.Is(err, context.Canceled)` 这类写法两边都成立。对等测试盯着这一条。
+
+网关原本会把下游的地址与建连失败原文发给客户端——gRPC 自己产生的传输层
+错误没有 ErrorInfo detail、也从没脱过敏，而 `ErrorRestorer` 当时把 status
+文本直接当成了对客户端可见的 Message。现在没有 detail 时一律给泛化描述，
+原文留在 cause 上进日志。
+
 ## 还差什么
 
 设计文档拆分四步里，这次只做了第 2 步：多进程、同一个仓库。第 3 步

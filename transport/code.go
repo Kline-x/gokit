@@ -1,7 +1,5 @@
 package transport
 
-import "errors"
-
 // 框架的错误码表。取值大体沿用 HTTP 状态码，方便一眼看懂；
 // 但并非逐个严格对应，看到码值时以下面每一条的注释为准。
 // 映射到 gRPC status 的规则是另一张表，在 component/grpcserver 里。
@@ -84,17 +82,17 @@ func Timeout(reason, message string) *Error {
 	return New(CodeTimeout, reason, message)
 }
 
-// Code 取出任意 error 的错误码。nil 返回 CodeOK，未归类的错误返回 CodeInternal。
+// Code 取出任意 error 的错误码。nil 返回 CodeOK。
 //
-// 注意本函数返回的是原始 Code，可能是 CodeOK。在协议边界上决定状态码时应当用
-// (*Error).StatusCode()，它会把错误路径上的零码归为内部错误。
+// 归类规则只在 FromError 里写一遍：自己再判一次的话，
+// context 超时这类特殊分类在这里就会漏掉，
+// 同一个错误在单体与拆分之后给出不同的码。
+//
+// 注意返回的是原始 Code，可能是 CodeOK。在协议边界上决定状态码时
+// 应当用 (*Error).StatusCode()，它会把错误路径上的零码归为内部错误。
 func Code(err error) int {
 	if err == nil {
 		return CodeOK
 	}
-	var e *Error
-	if errors.As(err, &e) {
-		return e.Code
-	}
-	return CodeInternal
+	return FromError(err).Code
 }

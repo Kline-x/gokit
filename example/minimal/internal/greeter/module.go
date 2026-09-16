@@ -1,7 +1,10 @@
 // Package greeter 是问候模块的装配入口。
 //
 // 模块对外只暴露两样东西：application.Service 接口，以及这里的装配集合。
-// 模块独立成服务时，把 internal/greeter 整个目录搬走即可。
+// 模块独立成服务时，internal/greeter 不是整个搬走：domain、application、
+// infrastructure 与 interfaces/grpc.go 跟着服务走；remote/ 留在调用方——
+// 它是调用方的出站适配器，本来就该跟调用方在一起；interfaces/http.go
+// 也留在调用方，因为调用方装配的是 RemoteSet，由它提供 HTTPHandler。
 package greeter
 
 import (

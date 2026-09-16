@@ -13,4 +13,6 @@ greeter:
   name: "grpcclient.greeter"
   target: "127.0.0.1:9000"
   dial_timeout: 5s
+  # 下游可能比本服务晚起，所以不等它；代价是下游还没起来时，请求会拿到 503，
+  # 直到 gRPC 的重连退避把连接拉起来。
   block: false

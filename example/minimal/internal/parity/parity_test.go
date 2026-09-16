@@ -251,6 +251,13 @@ func TestServiceBehavesIdenticallyLocalAndRemote(t *testing.T) {
 				t.Errorf("Code = %d, want %d", got, transport.CodeInternal)
 			}
 
+			// 这条断言在 local 一栏是空转的：sqldb 在这条路径上返回的是
+			// fmt.Errorf 包出来的普通 error，FromError 对它给出的 Message
+			// 是写死的字面量，编译期就能确定不含下面任何一个关键词，测不出
+			// 任何回归。它真正有意义的是 remote 一栏——那里的 Message 经过
+			// 服务端 ErrorMapper 脱敏、又被客户端 ErrorRestorer 还原，能捕住
+			// ErrorMapper 哪天不小心把底层细节漏出去。留着它只是为了让两栏
+			// 跑同一段断言，不要从「local 也过了」里读出它验证了什么对称性。
 			outward := transport.FromError(err).Message
 			for _, leak := range []string{"sql", "database", "greetings", "SELECT", "INSERT"} {
 				if strings.Contains(outward, leak) {
