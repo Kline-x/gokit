@@ -513,7 +513,7 @@ package transport
 
 import "errors"
 
-// 框架的错误码表。取值刻意与 HTTP 状态码对齐，方便直觉理解；
+// 框架的错误码表。取值大体沿用 HTTP 状态码，方便一眼看懂；
 // 映射到 gRPC status 的规则在 component/grpcserver 里。
 const (
 	// CodeOK 表示没有错误。
