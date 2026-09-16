@@ -7,7 +7,6 @@ package grpcclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -147,7 +146,7 @@ func (c *Client) Stop(context.Context) error {
 func (c *Client) Health(ctx context.Context) error {
 	conn := c.Conn()
 	if conn == nil {
-		return errors.New("grpcclient: " + c.cfg.Name + " 尚未建连")
+		return fmt.Errorf("grpcclient: %s 没有可用连接（尚未 Start，或已经 Stop）", c.cfg.Name)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.DialTimeout)

@@ -22,6 +22,8 @@ type Error struct {
 	// Code 是错误的分类码，取值见 code.go 中的常量。
 	Code int
 	// Reason 是稳定的机器可读标识，例如 USER_NOT_FOUND。
+	// 按约定只用大写字母、数字与下划线：gRPC 侧靠这个形状把 Reason 从
+	// status 的文本里认出来，掺入小写或空格会让它跨进程后还原不回来。
 	Reason string
 	// Message 是面向人的描述，不参与相等性判断。
 	Message string

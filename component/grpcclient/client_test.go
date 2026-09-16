@@ -191,3 +191,77 @@ func TestDialTimeoutIsRespected(t *testing.T) {
 		t.Errorf("Start() 耗时 %v，应当在 DialTimeout 附近返回", elapsed)
 	}
 }
+
+func TestSplitReasonIgnoresGRPCProseWithColons(t *testing.T) {
+	// gRPC 自己的错误文本里带冒号是常态，不能把前半段当成业务 Reason。
+	cases := []struct {
+		name        string
+		msg         string
+		wantReason  string
+		wantMessage string
+	}{
+		{
+			name:        "grpc 建连失败的文本",
+			msg:         "last connection error: connection refused",
+			wantReason:  "",
+			wantMessage: "last connection error: connection refused",
+		},
+		{
+			name:        "服务端产生的业务错误",
+			msg:         "USER_NOT_FOUND: 用户不存在",
+			wantReason:  "USER_NOT_FOUND",
+			wantMessage: "用户不存在",
+		},
+		{
+			name:        "小写前缀不算 Reason",
+			msg:         "something went wrong: 详情",
+			wantReason:  "",
+			wantMessage: "something went wrong: 详情",
+		},
+		{
+			name:        "没有分隔符",
+			msg:         "连接被拒绝",
+			wantReason:  "",
+			wantMessage: "连接被拒绝",
+		},
+		{
+			name:        "带数字与下划线的 Reason",
+			msg:         "ERR_42_BAD_STATE: 状态不对",
+			wantReason:  "ERR_42_BAD_STATE",
+			wantMessage: "状态不对",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason, message := splitReason(tc.msg)
+			if reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			if message != tc.wantMessage {
+				t.Errorf("message = %q, want %q", message, tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestErrorRestorerDoesNotFabricateReasonFromGRPCProse(t *testing.T) {
+	restorer := ErrorRestorer()
+
+	invoker := func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+		return status.Error(codes.Unavailable, "last connection error: connection refused")
+	}
+
+	err := restorer(context.Background(), "/x/y", nil, nil, nil, invoker)
+
+	var te *transport.Error
+	if !errors.As(err, &te) {
+		t.Fatalf("未能还原成 *transport.Error: %v", err)
+	}
+	if te.Reason != "" {
+		t.Errorf("Reason = %q，gRPC 自己的错误文本不该被当成业务 Reason", te.Reason)
+	}
+	if te.Message != "last connection error: connection refused" {
+		t.Errorf("Message = %q，整段文本应当原样保留", te.Message)
+	}
+}

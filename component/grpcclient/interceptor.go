@@ -56,10 +56,32 @@ func ErrorRestorer() grpc.UnaryClientInterceptor {
 	}
 }
 
-// splitReason 从 "REASON: 描述" 中拆出两段。没有冒号时整段都是描述。
+// looksLikeReason 判断一段文本像不像机器可读的 Reason。
+//
+// 按约定 Reason 由大写字母、数字与下划线组成，例如 USER_NOT_FOUND。
+// 之所以要这道闸：gRPC 自己产生的错误文本里也常带冒号，
+// 比如建连失败时的「last connection error: connection refused」。
+// 不加限制地按第一个冒号拆，就会把「last connection error」当成 Reason
+// 交给调用方去分支判断，而那根本不是业务语义。
+func looksLikeReason(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// splitReason 从 "REASON: 描述" 中拆出两段。
+// 拆不出、或前半段不像 Reason 时，整段都当描述，Reason 留空。
 func splitReason(msg string) (reason, message string) {
 	before, after, found := strings.Cut(msg, ": ")
-	if !found {
+	if !found || !looksLikeReason(before) {
 		return "", msg
 	}
 	return before, after
