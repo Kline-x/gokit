@@ -2,7 +2,7 @@ package httpserver
 
 import (
 	"bufio"
-	"fmt"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -53,8 +53,9 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 // statusRecorder 记录真实写出的状态码，供 RequestLog 使用。
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
-	bytes  int64
+	status   int
+	bytes    int64
+	hijacked bool
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
@@ -74,6 +75,9 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 }
 
 // Flush 透传底层 writer 的 Flush，保证 SSE 这类流式响应仍然可用。
+//
+// 这里把未写过的状态记为 200，是因为标准库的 Flush 在响应头尚未写出时
+// 会隐式提交 200。若底层 writer 的 Flush 没有这个语义，记录值可能与实际不符。
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		if r.status == 0 {
@@ -84,12 +88,21 @@ func (r *statusRecorder) Flush() {
 }
 
 // Hijack 透传底层 writer 的 Hijack，保证 WebSocket 升级这类接管连接的场景仍然可用。
+//
+// 注意：本包装层无条件实现 http.Hijacker，所以 w.(http.Hijacker) 断言总会成功，
+// 底层是否真的支持只能由返回的 error 体现。调用方必须检查这个 error，
+// 不能因为断言成功就认定拿到了可用的连接。
 func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := r.ResponseWriter.(http.Hijacker)
 	if !ok {
-		return nil, nil, fmt.Errorf("httpserver: 底层 ResponseWriter 不支持 Hijack")
+		return nil, nil, errors.New("httpserver: 底层 ResponseWriter 不支持 Hijack")
 	}
-	return h.Hijack()
+
+	conn, buf, err := h.Hijack()
+	if err == nil {
+		r.hijacked = true
+	}
+	return conn, buf, err
 }
 
 // ReadFrom 透传底层 writer 的 ReadFrom，保留 io.Copy 的零拷贝快路径。
@@ -97,13 +110,16 @@ func (r *statusRecorder) ReadFrom(src io.Reader) (int64, error) {
 	if r.status == 0 {
 		r.status = http.StatusOK
 	}
-	rf, ok := r.ResponseWriter.(io.ReaderFrom)
-	if !ok {
-		return io.Copy(r.ResponseWriter, src)
+
+	if rf, ok := r.ResponseWriter.(io.ReaderFrom); ok {
+		n, err := rf.ReadFrom(src)
+		r.bytes += n
+		return n, err
 	}
-	n, err := rf.ReadFrom(src)
-	r.bytes += n
-	return n, err
+
+	// 底层不支持 ReadFrom 时退回逐块拷贝。这里刻意包一层只暴露 Write 的匿名类型：
+	// 既让字节数走本记录器的 Write 统计，又避免 io.Copy 再次命中 ReadFrom 造成无限递归。
+	return io.Copy(struct{ io.Writer }{r}, src)
 }
 
 // RequestLog 记录每个请求的方法、路径、状态码与耗时，
@@ -119,6 +135,17 @@ func RequestLog(logger *slog.Logger) func(http.Handler) http.Handler {
 			rec := &statusRecorder{ResponseWriter: w}
 
 			next.ServeHTTP(rec, r.WithContext(ctx))
+
+			if rec.hijacked {
+				// 连接已被接管，之后的收发不再经过 HTTP 响应，
+				// 记录成独立事件，避免用一个假的状态码误导排障。
+				logger.InfoContext(ctx, "http 连接已被接管",
+					slog.String("method", r.Method),
+					slog.String("path", r.URL.Path),
+					slog.Duration("latency", time.Since(begin)),
+				)
+				return
+			}
 
 			if rec.status == 0 {
 				rec.status = http.StatusOK

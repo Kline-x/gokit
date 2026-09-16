@@ -200,3 +200,63 @@ func TestTimeoutReturns503ForSlowHandler(t *testing.T) {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
 }
+
+// notReaderFrom 只实现 http.ResponseWriter，用来逼出 ReadFrom 的退化路径。
+type notReaderFrom struct{ http.ResponseWriter }
+
+func TestReadFromCountsBytesOnFallbackPath(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	payload := strings.Repeat("x", 4096)
+	h := RequestLog(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := io.Copy(w, strings.NewReader(payload)); err != nil {
+			t.Errorf("io.Copy() error = %v", err)
+		}
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(&notReaderFrom{ResponseWriter: rec}, httptest.NewRequest(http.MethodGet, "/blob", nil))
+
+	if got := rec.Body.Len(); got != len(payload) {
+		t.Fatalf("写出字节数 = %d, want %d", got, len(payload))
+	}
+
+	var entry map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry); err != nil {
+		t.Fatalf("日志不是合法 JSON: %v, 内容=%q", err, buf.String())
+	}
+	if entry["bytes"] != float64(len(payload)) {
+		t.Errorf("日志里的 bytes = %v, want %d（退化路径也必须统计字节数）", entry["bytes"], len(payload))
+	}
+}
+
+func TestRequestLogReportsHijackedConnectionSeparately(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	rec := &flushHijackRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	h := RequestLog(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("包装后的 writer 丢失了 http.Hijacker")
+			return
+		}
+		if _, _, err := hijacker.Hijack(); err != nil {
+			t.Errorf("Hijack() error = %v", err)
+		}
+	}))
+
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws", nil))
+
+	var entry map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry); err != nil {
+		t.Fatalf("日志不是合法 JSON: %v, 内容=%q", err, buf.String())
+	}
+	if _, has := entry["status"]; has {
+		t.Errorf("被接管的连接不应记录状态码，实际日志=%v", entry)
+	}
+	if entry["msg"] != "http 连接已被接管" {
+		t.Errorf("msg = %v, want 「http 连接已被接管」", entry["msg"])
+	}
+}
