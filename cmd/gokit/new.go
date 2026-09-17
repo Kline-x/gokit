@@ -85,9 +85,9 @@ func runNew(w io.Writer, args []string) int {
 
 	if *skipTools {
 		if *withGRPC {
-			fmt.Fprintln(w, "跳过了 go mod tidy、proto 生成与 wire，记得自己跑一遍 make proto 和 make wire")
+			fmt.Fprintln(w, "跳过了 go mod tidy、proto 生成与 wire，记得自己跑一遍 make proto 和 gokit wire（或 make wire）")
 		} else {
-			fmt.Fprintln(w, "跳过了 go mod tidy 与 wire，记得自己跑一遍 make wire")
+			fmt.Fprintln(w, "跳过了 go mod tidy 与 wire，记得自己跑一遍 gokit wire（或 make wire）")
 		}
 		return 0
 	}
@@ -99,7 +99,7 @@ func runNew(w io.Writer, args []string) int {
 			// 这里 return 的时候项目里既没有 go.sum 也没有 wire_gen.go：
 			// 光说「跑 make proto 就行」不够，使用者装完 protoc、跑完
 			// make proto 之后，还会依次卡在缺 go.sum、undefined: initApp
-			// 上，一路排查过去才知道其实还差 go mod tidy 和 make wire
+			// 上，一路排查过去才知道其实还差 go mod tidy 和 gokit wire
 			// 两步。把完整补救顺序一次性列全，不要让人自己踩出来。
 			fmt.Fprintf(w, "gokit: proto 生成没跑成：%v\n", err)
 			fmt.Fprintf(w, "文件已经生成好了，但还差几步才能构建，都在 %s 里依次执行：\n", dst)
@@ -107,7 +107,7 @@ func runNew(w io.Writer, args []string) int {
 			fmt.Fprintln(w, "  2. make tools   # 装两个 protoc 插件，版本已经钉在 Makefile 里")
 			fmt.Fprintln(w, "  3. make proto   # 生成 .pb.go")
 			fmt.Fprintln(w, "  4. go mod tidy  # 补齐 go.sum")
-			fmt.Fprintln(w, "  5. make wire    # 生成装配代码 wire_gen.go")
+			fmt.Fprintln(w, "  5. gokit wire   # 生成装配代码 wire_gen.go（或 make wire）")
 			return 1
 		}
 	}
@@ -120,7 +120,7 @@ func runNew(w io.Writer, args []string) int {
 	if err := runIn(dst, "wire", "./..."); err != nil {
 		// wire 装不上不该让生成前功尽弃：文件都在，补跑一次就行。
 		fmt.Fprintf(w, "gokit: 代码生成没跑成：%v\n", err)
-		fmt.Fprintf(w, "文件已经生成好了，装上 wire 之后在 %s 里跑 make wire 即可。\n", dst)
+		fmt.Fprintf(w, "文件已经生成好了，装上 wire 之后在 %s 里跑 gokit wire（或 make wire）即可。\n", dst)
 		fmt.Fprintln(w, "  go install github.com/google/wire/cmd/wire@latest")
 		return 1
 	}

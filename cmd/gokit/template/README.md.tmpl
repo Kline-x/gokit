@@ -48,8 +48,10 @@ interfaces 只依赖 application；infrastructure 与 interfaces 互不依赖。
 provider、换了绑定）之后要重新生成：
 
 ```bash
-make wire
+gokit wire
 ```
+
+也可以用 `make wire`。
 {{if .WithGRPC}}
 ## 改了 proto 之后
 

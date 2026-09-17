@@ -6,7 +6,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 )
 
@@ -45,10 +44,4 @@ func main() {
 		fmt.Fprintf(os.Stderr, "未知命令 %q\n\n%s", os.Args[1], usage)
 		os.Exit(2)
 	}
-}
-
-// runWire 由 Task 5 实现。
-func runWire(w io.Writer, args []string) int {
-	fmt.Fprintln(w, "gokit wire 尚未实现")
-	return 2
 }
