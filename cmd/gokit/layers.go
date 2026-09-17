@@ -71,6 +71,13 @@ const (
 //  3. infrastructure 与 interfaces 互不依赖。
 //  4. 跨模块调用只能走对方的 application。
 //
+// 覆盖边界：只检查落在 internal/<模块>/<四层之一>/ 这个形状下的文件。
+// 业务模块目录下的其它东西——remote/（出站适配器）、module.go（装配入口）
+// 等——不受这四条规则约束，即便它们 import 了别的模块的 infrastructure
+// 也不会被这里发现。这条边界不是无意的疏漏：remote/ 该受哪些约束需要先
+// 想清楚（它合法地要引用对方 application，也合法地要引用本模块 domain
+// 做类型转换，判据不平凡），本检查目前只覆盖四层本身。
+//
 // 判断「是不是标准库」优先靠 root/go.mod 里的 module path：凡是以它为前缀的
 // import 都是本项目自己的包，不能被当成标准库放行。读不到 go.mod 时（例如
 // 测试用临时目录搭的假树），退回旧有的「路径第一段有没有点」这条惯例判断——
@@ -382,6 +389,17 @@ func judge(layer, module, imp string, isStdlib func(string) bool, isTest bool, m
 	}
 
 	otherModule, otherLayer, inside := parseInternalImport(imp, modules)
+
+	if inside && otherModule == module && otherLayer == layer {
+		// 同模块同层的自引用一律放行：领域模型长大后把 domain 拆成
+		// domain/valueobject、把 application 拆成 application/dto 是标准
+		// 做法；package xxx_test 引用同目录的正式包（如 domain_test 引用
+		// domain）也是 Go 里最常见的测试写法。这两种形状都只是同一层内部
+		// 怎么组织，不是分层方向要管的事，也不会放走任何真实的跨层/跨模块
+		// 违反——otherModule != module 或 otherLayer != layer 时这条完全
+		// 不生效，后面的规则照常执行。
+		return "", false
+	}
 
 	switch layer {
 	case layerDomain:

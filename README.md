@@ -71,7 +71,7 @@ func main() {
 装脚手架：
 
 ```bash
-go install github.com/Kline-x/gokit/cmd/gokit@v0.1.0
+go install github.com/Kline-x/gokit/cmd/gokit@latest
 ```
 
 生成一个项目：
@@ -102,7 +102,8 @@ go run ./cmd/server
 依赖标准库、不能 import 兄弟模块；application 只能 import 本模块 domain 与别的模块的
 application；infrastructure 与 interfaces 互不依赖；跨模块调用只能走对方的
 application。这项检查把分层约束变成了一条能跑的命令，破坏方向时 `doctor` 返回非零，
-可以直接接进 CI。
+可以直接接进 CI。它只检查落在 `internal/<模块>/<四层之一>/` 这个形状下的文件，业务
+模块目录下的 `remote/`（出站适配器）、`module.go` 等不受这四条规则约束。
 
 改了装配或 proto 之后重新生成，见生成项目自带 README 里的「改了装配之后」「改了
 proto 之后」两节；也可以用 `gokit wire [目录]` 一次性重新生成装配代码并构建一次

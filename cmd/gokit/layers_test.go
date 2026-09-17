@@ -133,6 +133,10 @@ func TestCheckLayersAllowsCrossModuleApplicationImport(t *testing.T) {
 	// 跨模块调用只能走对方的 application 接口，这一条是允许的。
 	writeGo(t, root, "internal/order/application/service.go",
 		"example.com/app/internal/user/application")
+	// user 必须真的被识别成业务模块（有四层子目录且有文件），否则走的是
+	// businessModules 里「模块不存在」那条 !inside 放行路径，测不到规则 4
+	// 真正的放行分支——把这段删掉，这个测试照样绿，就是假绿。
+	writeGo(t, root, "internal/user/domain/user.go", "context")
 
 	got, err := CheckLayers(root)
 	if err != nil {
@@ -301,8 +305,14 @@ func TestCheckLayersAllowsApplicationImportingThirdParty(t *testing.T) {
 
 // internal/pkg/errors 这类共享内部包，第二段不是四层之一，任何层引用它
 // 都不该被误判成「引用了别的业务模块」。
+//
+// internal/pkg 必须真的建出来（有文件，但没有四层子目录），否则测的只是
+// 「pkg 这个目录压根不存在」，守不住 businessModules 那条「有没有四层子
+// 目录」的判据——把 businessModules 改成「internal 下任意目录都算模块」，
+// 这个测试之前照样是绿的，就是假绿。
 func TestCheckLayersAllowsSharedInternalPackage(t *testing.T) {
 	root := t.TempDir()
+	writeGo(t, root, "internal/pkg/errors/e.go", "errors")
 	writeGo(t, root, "internal/user/application/x.go",
 		"example.com/app/internal/pkg/errors")
 
@@ -454,6 +464,56 @@ func TestModulePathOfRejectsParenBlock(t *testing.T) {
 	_, ok := modulePathOf(root)
 	if ok {
 		t.Errorf("modulePathOf() ok = true, want false（括号块形式不应该被当成有效模块名）")
+	}
+}
+
+// --- 以下验证同模块同层自引用被放行（子包与 x_test 两种形状） ---
+
+// domain 拆出子包（如 domain/valueobject）是领域模型长大后的标准做法，
+// 不该被当成「domain 只能依赖标准库」的违反。
+func TestCheckLayersAllowsDomainSubpackage(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/domain/user.go",
+		"context", "example.com/app/internal/user/domain/valueobject")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 0 {
+		t.Errorf("domain 引用本层子包不该被判违反，实际 = %v", got.Violations)
+	}
+}
+
+// package domain_test 引用同目录的 domain 包，是 Go 里最标准的外部测试包
+// 写法，不该被当成「domain 只能依赖标准库」的违反。
+func TestCheckLayersAllowsDomainExternalTestPackage(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/domain/user.go", "context")
+	writeGo(t, root, "internal/user/domain/user_test.go",
+		"example.com/app/internal/user/domain")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 0 {
+		t.Errorf("domain_test 引用同目录 domain 不该被判违反，实际 = %v", got.Violations)
+	}
+}
+
+// application 拆出子包（如 application/dto）同理不该被判违反。
+func TestCheckLayersAllowsApplicationSubpackage(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/application/s.go",
+		"example.com/app/internal/user/application/dto")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 0 {
+		t.Errorf("application 引用本层子包不该被判违反，实际 = %v", got.Violations)
 	}
 }
 
