@@ -86,3 +86,51 @@ func TestGoVersionCheckAcceptsCurrentToolchain(t *testing.T) {
 	}
 	t.Fatal("没找到 Go 版本这一项检查")
 }
+
+// toolchainChecks 必须显式检查 go 本身在不在 PATH 上：gokit new 要跑
+// go mod tidy、gokit wire 要跑 go build，没有 go 这两条命令都走不了，
+// 之前 doctor 却对此只字不提。
+func TestToolchainChecksIncludesGoBinary(t *testing.T) {
+	requireTool(t, "go")
+
+	for _, c := range toolchainChecks() {
+		if c.name == "go" {
+			if !c.ok {
+				t.Errorf("PATH 上明明有 go，go 这一项检查却判定未通过：%s", c.detail)
+			}
+			return
+		}
+	}
+	t.Fatal("toolchainChecks 里没有单独检查 go 二进制是否在 PATH 上")
+}
+
+// goVersionFromPATH 必须真的去执行 PATH 上的 go version，而不是用编译出
+// gokit 这个测试二进制的工具链版本代替——预编译分发、机器上装了多个 Go
+// 时，两者可能不是同一个版本。
+func TestGoVersionFromPATHParsesRealBinary(t *testing.T) {
+	requireTool(t, "go")
+
+	v, ok := goVersionFromPATH()
+	if !ok {
+		t.Fatalf("goVersionFromPATH() 应该能解析出 PATH 上 go 的版本")
+	}
+	if _, parsed := goMinor(v); !parsed {
+		t.Errorf("goVersionFromPATH() 返回的 %q 不是 goMinor 能解析的形状", v)
+	}
+}
+
+// doctor 的输出要把「框架要求 1.22」与「--sql 生成的项目要求 1.25（来自
+// SQLite 驱动）」分开说清楚，不能只报一个笼统的下限，让人误以为符合框架
+// 下限就够用了——带 --sql 的默认参数生成的 go.mod 实际写的是 1.25。
+func TestGoVersionCheckDetailMentionsBothMinimums(t *testing.T) {
+	c := goVersionCheck()
+	if !c.ok {
+		t.Skip("本机 Go 版本检查未通过，跳过措辞断言")
+	}
+	if !strings.Contains(c.detail, "1.22") {
+		t.Errorf("Go 版本检查的说明里应该点出框架下限 1.22：%s", c.detail)
+	}
+	if !strings.Contains(c.detail, "1.25") {
+		t.Errorf("Go 版本检查的说明里应该点出 --sql 生成项目的下限 1.25：%s", c.detail)
+	}
+}

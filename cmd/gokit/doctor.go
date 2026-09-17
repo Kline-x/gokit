@@ -13,6 +13,11 @@ import (
 // minGoMinor 是框架要求的 Go 次版本下限。标准库的方法路由是 1.22 才有的。
 const minGoMinor = 22
 
+// minGoMinorSQL 是带 --sql（默认开启）生成的项目要求的 Go 次版本下限。
+// 这不是 gokit 框架本身的要求，而是示例用的 SQLite 驱动
+// modernc.org/sqlite 需要更新的 Go 版本。
+const minGoMinorSQL = 25
+
 // check 是一项诊断结果。
 type check struct {
 	// name 是这项检查的名字，例如「Go 版本」。
@@ -82,6 +87,7 @@ func printCheck(w io.Writer, c check) {
 func toolchainChecks() []check {
 	return []check{
 		goVersionCheck(),
+		binaryCheck("go", "Go 工具链，new 与 wire 都要调用它"),
 		binaryCheck("wire", "代码装配生成器，gokit wire 要用它"),
 		binaryCheck("protoc", "proto 编译器，只有用 gRPC 才需要"),
 		binaryCheck("protoc-gen-go", "protoc 的 Go 插件"),
@@ -90,19 +96,48 @@ func toolchainChecks() []check {
 }
 
 func goVersionCheck() check {
-	v := runtime.Version() // 形如 go1.27.1
-	minor, ok := goMinor(v)
+	v, ok := goVersionFromPATH()
 	if !ok {
+		// PATH 上的 go 跑不起来或解析不出版本号（没装、或者输出格式变了）时，
+		// 退回编译 gokit 这个二进制所用的工具链版本兜底。这条兜底必须留着
+		// PATH 上完全没有 go 的场景不至于连个数字都报不出来，但要知道它可能
+		// 与 gokit new/wire 实际会调用的那个 go 不是同一个——预编译二进制
+		// 分发、机器上装了多个 Go、CI 里 gokit 来自缓存，都会让这个数字失真。
+		v = runtime.Version()
+	}
+	minor, parsed := goMinor(v)
+	if !parsed {
 		return check{name: "Go 版本", ok: false, detail: "认不出版本号 " + v}
 	}
 	if minor < minGoMinor {
 		return check{
 			name:   "Go 版本",
 			ok:     false,
-			detail: fmt.Sprintf("%s，低于要求的 1.%d", v, minGoMinor),
+			detail: fmt.Sprintf("%s，低于框架要求的 1.%d", v, minGoMinor),
 		}
 	}
-	return check{name: "Go 版本", ok: true, detail: v}
+	detail := fmt.Sprintf(
+		"%s（框架要求 ≥1.%d；带 --sql 生成的项目要求 ≥1.%d，来自 SQLite 驱动，不是 gokit 的要求）",
+		v, minGoMinor, minGoMinorSQL,
+	)
+	return check{name: "Go 版本", ok: true, detail: detail}
+}
+
+// goVersionFromPATH 执行 PATH 上的 go version 并解析出版本号，形如 go1.27.1。
+// 这是 gokit new、gokit wire 实际会调用的那个 go，不一定与编译出 gokit 这个
+// 二进制的工具链是同一个。
+func goVersionFromPATH() (string, bool) {
+	out, err := exec.Command("go", "version").Output()
+	if err != nil {
+		return "", false
+	}
+	// 标准输出形如 "go version go1.27.1 linux/amd64\n"。
+	for _, field := range strings.Fields(string(out)) {
+		if strings.HasPrefix(field, "go1.") {
+			return field, true
+		}
+	}
+	return "", false
 }
 
 // goMinor 从 go1.27.1 这样的字符串里取出次版本号。
