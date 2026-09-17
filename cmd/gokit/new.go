@@ -12,6 +12,9 @@ import (
 )
 
 // defaultGokitVersion 是生成项目默认依赖的框架版本。
+//
+// 发新版且模板用到了新 API 时，这里要跟着 bump，否则生成的项目 go.mod
+// 里锁的还是旧版本，可能缺新模板依赖的包或符号。
 const defaultGokitVersion = "v0.1.0"
 
 func runNew(w io.Writer, args []string) int {

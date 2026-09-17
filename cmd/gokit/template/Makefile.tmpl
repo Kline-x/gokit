@@ -17,8 +17,12 @@ test:
 # wire 重新生成装配代码。改了 internal/*/module.go 或 cmd/server/wire.go
 # 之后要跑一遍，把结果提交进版本库——wire_gen.go 是生成好的文件，
 # 项目构建不依赖 wire 工具本身。
+#
+# 版本必须与 go.mod 里锁定的 github.com/google/wire 对齐，且带 @version 时
+# go 在模块外解析这个可执行包，不会把它的依赖（subcommands、go-difflib）
+# 落进本项目的 go.sum。
 wire:
-	$(GO) run github.com/google/wire/cmd/wire ./...
+	$(GO) run github.com/google/wire/cmd/wire@v0.7.0 ./...
 {{if .WithGRPC}}
 # PROTOC 与插件的位置。默认取 PATH 上的，可覆盖。
 PROTOC ?= protoc
