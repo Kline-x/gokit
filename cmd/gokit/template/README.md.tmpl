@@ -14,8 +14,8 @@ go run ./cmd/server
 curl -i localhost:8080/{{.Module}}/world
 ```
 
-配置文件在 `configs/config.yaml`，也可以用环境变量覆盖，前缀是 `{{.Name}}`
-（大小写不敏感），例如 `{{.Name}}_HTTP_ADDR`。
+配置文件在 `configs/config.yaml`，也可以用环境变量覆盖，前缀是 `{{.EnvPrefix}}`
+（大小写敏感，须用大写），例如 `{{.EnvPrefix}}_HTTP_ADDR`。
 
 ## 目录结构
 
@@ -29,8 +29,9 @@ internal/{{.Module}}/
     module.go         模块的装配入口（LocalSet）
 ```
 
-这四层的依赖方向是单向的：domain 不依赖任何人；application 只依赖本模块的
-domain；infrastructure 与 interfaces 互不依赖，都只依赖 application。
+这四层的依赖方向是单向的：domain 不依赖任何人；application 依赖本模块的
+domain，对外只暴露 Service 接口；infrastructure 实现 domain 的仓储契约；
+interfaces 只依赖 application；infrastructure 与 interfaces 互不依赖。
 `gokit doctor` 会检查这个方向有没有被破坏。
 
 ## 改了装配之后

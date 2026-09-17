@@ -27,6 +27,9 @@ type projectData struct {
 	Module string
 	// ModuleTitle 是 Module 首字母大写后的形式，用于类型名。
 	ModuleTitle string
+	// EnvPrefix 是环境变量覆盖配置时用的前缀，Name 的大写形式。
+	// os.LookupEnv 在类 Unix 系统上大小写敏感，必须原样匹配大写。
+	EnvPrefix string
 	// GokitVersion 是生成项目依赖的框架版本。
 	GokitVersion string
 	// Replace 非空时，生成的 go.mod 里加一条指向本地框架的 replace。

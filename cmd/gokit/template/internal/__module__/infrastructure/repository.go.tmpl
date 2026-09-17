@@ -16,7 +16,7 @@ import (
 	"{{.ModPath}}/internal/{{.Module}}/domain"
 )
 
-{{if .WithSQL}}
+{{if .WithSQL -}}
 // {{.ModuleTitle}}Repo 用关系库实现 domain.Repository。
 type {{.ModuleTitle}}Repo struct {
 	db *sqldb.DB
@@ -91,7 +91,7 @@ func (m *Migrator) Start(ctx context.Context) error { return Migrate(ctx, m.db) 
 
 // Stop 实现 app.Component。迁移没有需要释放的东西。
 func (m *Migrator) Stop(context.Context) error { return nil }
-{{else}}
+{{else -}}
 // {{.ModuleTitle}}Repo 用内存实现 domain.Repository，不依赖任何外部存储。
 // 进程重启数据即丢失，仅用于快速起步；接入真实数据库时把它换成 SQL 实现，
 // 应用层与接口层不用改一行。
@@ -128,4 +128,4 @@ func (r *{{.ModuleTitle}}Repo) FindByName(ctx context.Context, name string) (dom
 func (r *{{.ModuleTitle}}Repo) Tx(ctx context.Context, fn func(ctx context.Context) error) error {
 	return fn(ctx)
 }
-{{end}}
+{{end -}}

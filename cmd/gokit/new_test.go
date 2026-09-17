@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,7 @@ func TestNewGeneratesBuildableProject(t *testing.T) {
 	}
 	requireTool(t, "go")
 	requireTool(t, "wire")
+	requireTool(t, "gofmt")
 
 	proj := filepath.Join(t.TempDir(), "myapp")
 
@@ -69,6 +71,18 @@ func TestNewGeneratesBuildableProject(t *testing.T) {
 	if b, err := vet.CombinedOutput(); err != nil {
 		t.Fatalf("生成的项目 go vet 失败: %v\n%s", err, b)
 	}
+
+	// 生成的代码要求 gofmt 干净：每个用脚手架起的项目都会带着这份格式，
+	// 第一次有人跑 gofmt -w 就不该冒出一堆无关 diff。
+	gofmtCmd := exec.Command("gofmt", "-l", ".")
+	gofmtCmd.Dir = proj
+	gofmtOut, err := gofmtCmd.Output()
+	if err != nil {
+		t.Fatalf("gofmt -l 执行失败: %v", err)
+	}
+	if dirty := strings.TrimSpace(string(gofmtOut)); dirty != "" {
+		t.Errorf("生成的项目不是 gofmt 干净的，以下文件需要重新格式化：\n%s", dirty)
+	}
 }
 
 // TestNewGeneratesLayerCleanProject 把 doctor 掉头指向自己的产物：
@@ -83,6 +97,17 @@ func TestNewGeneratesLayerCleanProject(t *testing.T) {
 	result, err := CheckLayers(proj)
 	if err != nil {
 		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	// CheckLayers 在 internal/ 不存在、或者一个符合形状的文件都没识别到时，
+	// 同样会返回零值 Violations + nil error。只看 Violations == 0 拦不住
+	// 模板退化成不产出任何文件——必须确认它真的检查过东西。
+	if result.FilesChecked == 0 {
+		t.Fatalf("CheckLayers 一个文件都没识别到，这个断言等于没跑")
+	}
+	// 解析失败的文件不会出现在 Violations 里，而是单独放在 ParseFailures——
+	// 模板产出语法不合法的 Go 源码时，Violations 仍可能是空的。
+	if len(result.ParseFailures) != 0 {
+		t.Errorf("生成的项目里有文件解析失败：%v", result.ParseFailures)
 	}
 	if len(result.Violations) != 0 {
 		t.Errorf("脚手架生成的项目自己就违反了分层规则：%v", result.Violations)
@@ -105,5 +130,26 @@ func TestNewRequiresModulePath(t *testing.T) {
 	var out bytes.Buffer
 	if code := runNew(&out, []string{filepath.Join(t.TempDir(), "myapp")}); code == 0 {
 		t.Error("缺 --mod 应该报错，实际成功了")
+	}
+}
+
+func TestNewRejectsInvalidModuleName(t *testing.T) {
+	var out bytes.Buffer
+	dst := filepath.Join(t.TempDir(), "myapp")
+	code := runNew(&out, []string{dst, "--mod", "example.com/myapp", "--module", "user-profile", "--skip-tools"})
+	if code == 0 {
+		t.Error("--module user-profile 不是合法的 Go 标识符，应该被拒绝，实际成功了")
+	}
+	if _, err := os.Stat(dst); err == nil {
+		t.Error("--module 校验失败时不应该已经落盘")
+	}
+}
+
+func TestNewRejectsModPathWithWhitespace(t *testing.T) {
+	var out bytes.Buffer
+	dst := filepath.Join(t.TempDir(), "myapp")
+	code := runNew(&out, []string{dst, "--mod", "example.com/my app", "--skip-tools"})
+	if code == 0 {
+		t.Error("--mod 包含空白字符应该被拒绝，实际成功了")
 	}
 }

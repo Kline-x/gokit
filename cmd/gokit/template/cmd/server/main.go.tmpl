@@ -15,6 +15,7 @@ import (
 	"github.com/Kline-x/gokit/component/log"
 {{if .WithSQL}}	"github.com/Kline-x/gokit/component/sqldb"
 {{end}}	"github.com/Kline-x/gokit/config"
+
 {{if .WithSQL}}	"{{.ModPath}}/internal/{{.Module}}/infrastructure"
 {{end}}	"{{.ModPath}}/internal/{{.Module}}/interfaces"
 )
@@ -40,7 +41,8 @@ func defaultConfig() Config {
 
 // Bundle 汇总一次装配产出的对象。
 //
-// HTTP 字段保留是因为测试需要读它真实监听到的端口。
+// 这里刻意不逐个列出基础设施组件：要托管哪些组件由 provideComponents 决定，
+// 而 provideComponents 的入参又由 wire 按当前引入的装配集合推导。
 type Bundle struct {
 	App        *app.App
 	HTTP       *httpserver.Server
@@ -77,6 +79,10 @@ func provideHTTPServer(cfg httpserver.Config, h http.Handler, a *app.App) *https
 }
 
 // provideComponents 列出本次装配要交给 App 托管的组件。
+//
+// 换用远程实现时，这个函数的入参要跟着装配集合一起改——不再需要的共享基础
+// 设施（例如数据库）必须同时从这里和 wire.Build 里去掉，否则进程仍会去连一个
+// 它根本不用的库。
 func provideComponents(
 	logger *log.Logger,
 {{if .WithSQL}}	db *sqldb.DB,
@@ -94,7 +100,7 @@ func main() {
 	cfg := defaultConfig()
 	loader := config.New(
 		config.WithOptionalFile(configPath),
-		config.WithEnvPrefix("{{.Name}}"),
+		config.WithEnvPrefix("{{.EnvPrefix}}"),
 	)
 	if err := loader.Load(&cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "加载配置失败:", err)

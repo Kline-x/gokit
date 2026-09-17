@@ -50,16 +50,27 @@ func runNew(w io.Writer, args []string) int {
 		fmt.Fprintln(w, "gokit: --mod 是必填的，它决定生成项目的 import 路径")
 		return 2
 	}
+	if strings.ContainsAny(*modPath, " \t\r\n") {
+		fmt.Fprintf(w, "gokit: --mod 的值 %q 不能包含空白字符\n", *modPath)
+		return 2
+	}
+	if !validGoIdentifier(*module) {
+		fmt.Fprintf(w, "gokit: --module 的值 %q 不是合法的 Go 标识符（须以字母或下划线开头，"+
+			"其余字符只能是字母、数字或下划线），它会被原样用作生成代码里的包名\n", *module)
+		return 2
+	}
 	if err := checkEmpty(dst); err != nil {
 		fmt.Fprintf(w, "gokit: %v\n", err)
 		return 1
 	}
 
+	name := lastSegment(*modPath)
 	data := projectData{
 		ModPath:      *modPath,
-		Name:         lastSegment(*modPath),
+		Name:         name,
 		Module:       *module,
 		ModuleTitle:  title(*module),
+		EnvPrefix:    strings.ToUpper(name),
 		GokitVersion: *version,
 		Replace:      filepath.ToSlash(*replace),
 		WithSQL:      *withSQL,
@@ -73,7 +84,7 @@ func runNew(w io.Writer, args []string) int {
 	fmt.Fprintf(w, "已生成 %s\n", dst)
 
 	if *skipTools {
-		fmt.Fprintln(w, "跳过了 go mod tidy 与 wire，记得自己跑一遍 gokit wire")
+		fmt.Fprintln(w, "跳过了 go mod tidy 与 wire，记得自己跑一遍 make wire")
 		return 0
 	}
 
@@ -85,7 +96,7 @@ func runNew(w io.Writer, args []string) int {
 	if err := runIn(dst, "wire", "./..."); err != nil {
 		// wire 装不上不该让生成前功尽弃：文件都在，补跑一次就行。
 		fmt.Fprintf(w, "gokit: 代码生成没跑成：%v\n", err)
-		fmt.Fprintf(w, "文件已经生成好了，装上 wire 之后在 %s 里跑 gokit wire 即可。\n", dst)
+		fmt.Fprintf(w, "文件已经生成好了，装上 wire 之后在 %s 里跑 make wire 即可。\n", dst)
 		fmt.Fprintln(w, "  go install github.com/google/wire/cmd/wire@latest")
 		return 1
 	}
@@ -124,6 +135,26 @@ func lastSegment(modPath string) string {
 		return modPath[i+1:]
 	}
 	return modPath
+}
+
+// validGoIdentifier 检查 s 是否是一个合法的 Go 标识符：以字母或下划线开头，
+// 其余字符只能是字母、数字或下划线。--module 的值会被原样用作包名，
+// 不合法的包名（比如带连字符）生成出来的项目编译不过。
+func validGoIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r == '_' || unicode.IsLetter(r):
+			// 字母或下划线在任何位置都合法。
+		case unicode.IsDigit(r) && i > 0:
+			// 数字只在非开头位置合法。
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // title 把 hello 变成 Hello，用于生成类型名。
