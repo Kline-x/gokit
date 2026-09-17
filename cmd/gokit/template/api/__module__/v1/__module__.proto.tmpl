@@ -1,0 +1,24 @@
+{{if .WithGRPC}}
+syntax = "proto3";
+
+package {{.Module}}.v1;
+
+option go_package = "{{.ModPath}}/api/{{.Module}}/v1;{{.Module}}v1";
+
+// {{.ModuleTitle}} 是{{.Module}}模块对外的 gRPC 契约。
+// 模块拆成独立服务后，这份 proto 随模块一起搬走，调用方按它生成客户端。
+service {{.ModuleTitle}} {
+  // Get 返回某个名字对应的记录，语义与 HTTP 接口一致。
+  rpc Get(GetRequest) returns (GetReply);
+}
+
+message GetRequest {
+  // name 是要查询的名字，不能为空。
+  string name = 1;
+}
+
+message GetReply {
+  // text 是返回的文本。
+  string text = 1;
+}
+{{end -}}

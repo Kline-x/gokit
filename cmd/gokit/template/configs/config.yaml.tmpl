@@ -1,0 +1,21 @@
+log:
+  level: info
+  format: json
+  output: stdout
+
+http:
+  addr: ":8080"
+  read_timeout: 15s
+  write_timeout: 15s
+{{if .WithGRPC}}
+grpc:
+  name: "grpcserver"
+  addr: ":9000"
+  shutdown_timeout: 10s
+  enable_reflection: false # 反射会把完整服务契约暴露出去，本地调试时按需改成 true
+{{end}}{{if .WithSQL}}
+db:
+  driver: sqlite
+  dsn: "file:{{.Name}}.db"
+  max_open_conns: 10
+{{end}}

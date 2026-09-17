@@ -1,0 +1,30 @@
+// Package domain 是{{.Module}}模块的领域层。
+//
+// 这一层只描述业务概念，除标准库外不 import 任何包，
+// 也不感知数据库、HTTP 等任何技术细节。
+package domain
+
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotFound 表示指定名字还没有对应的记录。
+var ErrNotFound = errors.New("记录不存在")
+
+// {{.ModuleTitle}} 是一条最简单的示例记录，按实际业务替换。
+type {{.ModuleTitle}} struct {
+	Name string
+	Text string
+}
+
+// New{{.ModuleTitle}} 按业务规则生成一条记录。这里是最简单的示例规则，按需替换。
+func New{{.ModuleTitle}}(name string) {{.ModuleTitle}} {
+	return {{.ModuleTitle}}{Name: name, Text: "你好，" + name}
+}
+
+// Repository 是{{.Module}}的仓储契约，实现放在 infrastructure 层。
+type Repository interface {
+	Save(ctx context.Context, v {{.ModuleTitle}}) error
+	FindByName(ctx context.Context, name string) ({{.ModuleTitle}}, error)
+}

@@ -1,0 +1,77 @@
+# {{.Name}}
+
+由 `gokit new` 生成，基于 [gokit](https://github.com/Kline-x/gokit) 框架。
+
+## 跑起来
+
+```bash
+go run ./cmd/server
+```
+
+默认监听 `:8080`，示例路由挂在 `/{{.Module}}/{name}`：
+
+```bash
+curl -i localhost:8080/{{.Module}}/world
+```
+{{if .WithGRPC}}
+gRPC 默认监听 `:9000`，同一个用例（Get）通过 `{{.ModuleTitle}}` 服务对外提供：
+
+```bash
+grpcurl -plaintext -d '{"name":"world"}' localhost:9000 {{.Module}}.v1.{{.ModuleTitle}}/Get
+```
+{{end}}
+配置文件在 `configs/config.yaml`，也可以用环境变量覆盖，前缀是 `{{.EnvPrefix}}`
+（大小写敏感，须用大写），例如 `{{.EnvPrefix}}_HTTP_ADDR`。
+
+## 目录结构
+
+```
+cmd/server/          组合根：读配置、装配对象图、启动 App
+internal/{{.Module}}/
+    domain/           领域层，只依赖标准库
+    application/      应用层，编排用例、划定事务边界，对外只暴露 Service 接口
+    infrastructure/   基础设施层，实现仓储契约{{if .WithSQL}}、管理数据库迁移{{end}}
+    interfaces/       接口层，把 HTTP{{if .WithGRPC}}/gRPC{{end}} 请求翻译成用例调用
+    module.go         模块的装配入口（LocalSet）
+{{if .WithGRPC}}api/{{.Module}}/v1/      {{.Module}} 模块的 gRPC 契约（.proto），编译产物由 make proto 生成
+{{end}}```
+
+这四层的依赖方向是单向的：domain 不依赖任何人；application 依赖本模块的
+domain，对外只暴露 Service 接口；infrastructure 实现 domain 的仓储契约；
+interfaces 只依赖 application；infrastructure 与 interfaces 互不依赖。
+`gokit doctor` 会检查这个方向有没有被破坏。
+
+## 改了装配之后
+
+`cmd/server/wire.go` 与 `internal/{{.Module}}/module.go` 描述的是对象怎么
+装配起来，实际生效的是同目录下生成的 `wire_gen.go`。改了装配（加了新的
+provider、换了绑定）之后要重新生成：
+
+```bash
+gokit wire
+```
+
+也可以用 `make wire`。
+{{if .WithGRPC}}
+## 改了 proto 之后
+
+`api/{{.Module}}/v1/{{.Module}}.proto` 描述的是 gRPC 契约，实际生效的是同目录下
+生成的 `.pb.go`。改了 proto（加字段、加方法）之后要重新生成：
+
+```bash
+make proto
+```
+
+生成前需要装好 `protoc`（[官方 release](https://github.com/protocolbuffers/protobuf/releases)）
+和两个插件，跑一次即可：
+
+```bash
+make tools
+```
+{{end}}{{if .WithSQL}}
+## 关于 go.mod 里的 go 1.25.0
+
+这不是 gokit 框架本身的要求（框架是 go 1.22），而是示例用的 SQLite 驱动
+`modernc.org/sqlite` 需要更新的 Go 版本。换成别的数据库驱动时可以把这一行
+降回 1.22。
+{{end}}

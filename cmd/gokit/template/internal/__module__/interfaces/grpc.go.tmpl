@@ -1,0 +1,42 @@
+{{if .WithGRPC}}
+// Package interfaces 是{{.Module}}模块的接口层：只做协议转换。
+package interfaces
+
+import (
+	"context"
+
+	"google.golang.org/grpc"
+
+	{{.Module}}v1 "{{.ModPath}}/api/{{.Module}}/v1"
+	"{{.ModPath}}/internal/{{.Module}}/application"
+)
+
+// GRPCHandler 把{{.Module}}用例暴露成 gRPC 接口。
+//
+// 它和 HTTPHandler 是并列的两个接口层实现，委托的是同一个
+// application.Service —— 业务逻辑只有一份，协议有两种。
+type GRPCHandler struct {
+	{{.Module}}v1.Unimplemented{{.ModuleTitle}}Server
+	svc application.Service
+}
+
+// NewGRPCHandler 构造 gRPC 接口层处理器。
+func NewGRPCHandler(svc application.Service) *GRPCHandler {
+	return &GRPCHandler{svc: svc}
+}
+
+// Register 实现 grpcserver.ServiceRegistrar，把本服务挂到 gRPC 服务器上。
+func (h *GRPCHandler) Register(s *grpc.Server) {
+	{{.Module}}v1.Register{{.ModuleTitle}}Server(s, h)
+}
+
+// Get 实现 {{.Module}}v1.{{.ModuleTitle}}Server，只做协议转换。
+// 业务错误原样返回，由服务端拦截器翻译成 gRPC status。
+func (h *GRPCHandler) Get(ctx context.Context, req *{{.Module}}v1.GetRequest) (*{{.Module}}v1.GetReply, error) {
+	reply, err := h.svc.Get(ctx, application.{{.ModuleTitle}}Request{Name: req.GetName()})
+	if err != nil {
+		return nil, err
+	}
+	return &{{.Module}}v1.GetReply{Text: reply.Text}, nil
+}
+{{end -}}

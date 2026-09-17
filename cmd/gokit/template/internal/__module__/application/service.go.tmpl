@@ -1,0 +1,77 @@
+// Package application 是{{.Module}}模块的应用层：编排用例、划定事务边界，
+// 并以接口形式对外暴露能力。
+//
+// 跨模块调用只允许依赖本包的 Service 接口。单体部署时注入 LocalService，
+// 本模块独立成服务后换成 gRPC 客户端实现，调用方代码一行都不用改。
+package application
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/Kline-x/gokit/transport"
+
+	"{{.ModPath}}/internal/{{.Module}}/domain"
+)
+
+// {{.ModuleTitle}}Request 是 Get 用例的入参。
+type {{.ModuleTitle}}Request struct {
+	Name string
+}
+
+// {{.ModuleTitle}}Reply 是 Get 用例的出参。
+type {{.ModuleTitle}}Reply struct {
+	Text string
+}
+
+// Service 是{{.Module}}模块对外的唯一契约。
+type Service interface {
+	Get(ctx context.Context, req {{.ModuleTitle}}Request) ({{.ModuleTitle}}Reply, error)
+}
+
+// Transactor 是应用层对事务能力的抽象。
+// 应用层借此划定事务边界，而不必知道底层是哪种存储。
+type Transactor interface {
+	Tx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// LocalService 是 Service 的进程内实现。
+type LocalService struct {
+	repo domain.Repository
+	tx   Transactor
+}
+
+// NewLocalService 构造进程内实现。
+func NewLocalService(repo domain.Repository, tx Transactor) *LocalService {
+	return &LocalService{repo: repo, tx: tx}
+}
+
+// Get 返回某个名字的记录，不存在时先生成再落库。
+// 查询与写入包在同一个事务里，事务边界由应用层决定。
+func (s *LocalService) Get(ctx context.Context, req {{.ModuleTitle}}Request) ({{.ModuleTitle}}Reply, error) {
+	if req.Name == "" {
+		return {{.ModuleTitle}}Reply{}, transport.InvalidArgument("NAME_REQUIRED", "name 不能为空").
+			WithMetadata(map[string]string{"field": "name"})
+	}
+
+	var reply {{.ModuleTitle}}Reply
+	err := s.tx.Tx(ctx, func(ctx context.Context) error {
+		v, err := s.repo.FindByName(ctx, req.Name)
+		switch {
+		case err == nil:
+			reply = {{.ModuleTitle}}Reply{Text: v.Text}
+			return nil
+		case errors.Is(err, domain.ErrNotFound):
+			v = domain.New{{.ModuleTitle}}(req.Name)
+			if err := s.repo.Save(ctx, v); err != nil {
+				return fmt.Errorf("保存记录失败: %w", err)
+			}
+			reply = {{.ModuleTitle}}Reply{Text: v.Text}
+			return nil
+		default:
+			return fmt.Errorf("查询记录失败: %w", err)
+		}
+	})
+	return reply, err
+}

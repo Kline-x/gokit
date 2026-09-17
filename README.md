@@ -66,6 +66,49 @@ func main() {
 2. **`Start` 必须快速返回**：像 HTTP、gRPC 这类需要长期运行、阻塞监听的组件，要在 `Start` 内部自己起一个 goroutine 去跑，`Start` 本身不能被服务本体的阻塞逻辑占住。
 3. **运行期失败通过回调上报，而不是阻塞在 `Start` 里等错误发生**：组件在构造时接收一个"致命错误"回调（通常是组件自带的 `WithFatal` 选项），运行中出现无法恢复的问题时调用它；`App` 收到后会触发整体优雅退出。不要用阻塞、重试等方式在 `Start` 里死等这类错误。
 
+## 起一个新项目
+
+装脚手架：
+
+```bash
+go install github.com/Kline-x/gokit/cmd/gokit@latest
+```
+
+生成一个项目：
+
+```bash
+gokit new myapp --mod example.com/myapp
+cd myapp
+go run ./cmd/server
+```
+
+`--mod` 是必填的模块路径，决定生成项目的 import 路径。其余常用参数：`--module`
+指定生成的示例业务模块名（默认 `hello`）；`--sql` 控制要不要生成数据库组件与仓储
+实现（默认开）；`--grpc` 控制要不要额外生成 gRPC 服务端与 proto（默认关）；
+`--replace` 指向本地 gokit 检出路径，框架自身开发调试时用。完整参数看
+`gokit new -h`。
+
+生成之后 `gokit new` 会自动跑 `go mod tidy` 和 `wire`，`--skip-tools` 可以跳过
+这两步；加了 `--grpc` 时，`--skip-tools` 还会一并跳过 proto 生成。所以生成的
+项目要能立刻构建，本机得先装好这些外部工具：
+
+- `wire`（`go install github.com/google/wire/cmd/wire@v0.7.0`）——任何时候都需要，负责生成装配代码；版本要与生成项目 `Makefile` 里 `make wire` 锁定的版本一致，生成器与运行时版本错配的后果见生成项目 `Makefile` 里的注释。
+- 加了 `--grpc` 时还需要 `protoc`（[官方 release](https://github.com/protocolbuffers/protobuf/releases)）
+  和两个插件 `protoc-gen-go`、`protoc-gen-go-grpc`（生成项目自带的 `make tools`
+  会按锁定版本装）。
+
+工具缺了哪个不用一个个试，`gokit doctor [目录]` 会一次性列出来。它还会做另一件事：
+检查 `internal/<模块>/<层>` 目录下的 import 关系有没有破坏分层依赖方向——domain 只能
+依赖标准库、不能 import 兄弟模块；application 只能 import 本模块 domain 与别的模块的
+application；infrastructure 与 interfaces 互不依赖；跨模块调用只能走对方的
+application。这项检查把分层约束变成了一条能跑的命令，破坏方向时 `doctor` 返回非零，
+可以直接接进 CI。它只检查落在 `internal/<模块>/<四层之一>/` 这个形状下的文件，业务
+模块目录下的 `remote/`（出站适配器）、`module.go` 等不受这四条规则约束。
+
+改了装配或 proto 之后重新生成，见生成项目自带 README 里的「改了装配之后」「改了
+proto 之后」两节；也可以用 `gokit wire [目录]` 一次性重新生成装配代码并构建一次
+确认可用。
+
 ## 包一览
 
 | 包 | 说明 |
@@ -78,6 +121,7 @@ func main() {
 | `transport` | 与协议无关的错误类型与错误码表，以及 HTTP 侧的统一响应。 |
 | `component/grpcserver` | gRPC 服务组件，自带健康检查，默认装上 recover 与错误映射两个拦截器；反射默认关闭，按需在配置里打开。 |
 | `component/grpcclient` | gRPC 客户端连接组件，把下游返回的 status 还原成框架错误。 |
+| `cmd/gokit` | 脚手架 CLI：`gokit new` 生成新项目、`gokit wire` 重新生成装配代码并构建验证、`gokit doctor` 检查工具链与分层依赖方向。 |
 
 ## 统一错误语义
 
@@ -94,7 +138,6 @@ func main() {
 
 ## 本版不包含
 
-- 脚手架 CLI
 - 服务注册发现
 - 链路追踪
 - 熔断限流

@@ -1,0 +1,131 @@
+// Package infrastructure 是{{.Module}}模块的基础设施层：把领域层的仓储契约
+// 落到具体存储上。它可以依赖 gokit 组件，但不被领域层与应用层依赖。
+package infrastructure
+
+import (
+	"context"
+{{if .WithSQL}}
+	"database/sql"
+	"errors"
+	"fmt"
+
+	"github.com/Kline-x/gokit/component/sqldb"
+{{else}}
+	"sync"
+{{end}}
+	"{{.ModPath}}/internal/{{.Module}}/domain"
+)
+
+{{if .WithSQL -}}
+// {{.ModuleTitle}}Repo 用关系库实现 domain.Repository。
+type {{.ModuleTitle}}Repo struct {
+	db *sqldb.DB
+}
+
+// New{{.ModuleTitle}}Repo 构造仓储。
+func New{{.ModuleTitle}}Repo(db *sqldb.DB) *{{.ModuleTitle}}Repo {
+	return &{{.ModuleTitle}}Repo{db: db}
+}
+
+// Save 写入一条记录。
+//
+// 这里取执行器用的是 db.Executor(ctx)：处于事务中时自动落到当前事务，
+// 否则走连接池，同一份代码两种场景都适用。
+func (r *{{.ModuleTitle}}Repo) Save(ctx context.Context, v domain.{{.ModuleTitle}}) error {
+	_, err := r.db.Executor(ctx).ExecContext(ctx,
+		`INSERT INTO {{.Module}}s(name, text) VALUES(?, ?)`, v.Name, v.Text)
+	if err != nil {
+		return fmt.Errorf("写入 {{.Module}}s 失败: %w", err)
+	}
+	return nil
+}
+
+// FindByName 按名字查询记录，查不到时返回 domain.ErrNotFound。
+func (r *{{.ModuleTitle}}Repo) FindByName(ctx context.Context, name string) (domain.{{.ModuleTitle}}, error) {
+	row := r.db.Executor(ctx).QueryRowContext(ctx,
+		`SELECT name, text FROM {{.Module}}s WHERE name = ?`, name)
+
+	var v domain.{{.ModuleTitle}}
+	if err := row.Scan(&v.Name, &v.Text); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.{{.ModuleTitle}}{}, domain.ErrNotFound
+		}
+		return domain.{{.ModuleTitle}}{}, fmt.Errorf("查询 {{.Module}}s 失败: %w", err)
+	}
+	return v, nil
+}
+
+// Migrate 建表。示例用，真实项目应走迁移工具。
+func Migrate(ctx context.Context, db *sqldb.DB) error {
+	_, err := db.ExecContext(ctx,
+		`CREATE TABLE IF NOT EXISTS {{.Module}}s (name TEXT PRIMARY KEY, text TEXT NOT NULL)`)
+	if err != nil {
+		return fmt.Errorf("建表失败: %w", err)
+	}
+	return nil
+}
+
+// Migrator 把建表这件事变成一个受 App 托管的组件。
+//
+// 它声明依赖数据库组件，因此 App 会保证数据库先启动、探活通过之后
+// 才轮到它建表；停止时它也会先于数据库被停掉。示例用，
+// 真实项目应当走正式的迁移工具。
+type Migrator struct {
+	db *sqldb.DB
+}
+
+// NewMigrator 构造迁移组件。
+func NewMigrator(db *sqldb.DB) *Migrator {
+	return &Migrator{db: db}
+}
+
+// Name 实现 app.Component。
+func (m *Migrator) Name() string { return "{{.Module}}.migrator" }
+
+// DependsOn 实现 app.Dependent：建表必须发生在数据库可用之后。
+// 这里取数据库组件自己配置的名字，而不是写死字符串。
+func (m *Migrator) DependsOn() []string { return []string{m.db.Name()} }
+
+// Start 实现 app.Component，建表。
+func (m *Migrator) Start(ctx context.Context) error { return Migrate(ctx, m.db) }
+
+// Stop 实现 app.Component。迁移没有需要释放的东西。
+func (m *Migrator) Stop(context.Context) error { return nil }
+{{else -}}
+// {{.ModuleTitle}}Repo 用内存实现 domain.Repository，不依赖任何外部存储。
+// 进程重启数据即丢失，仅用于快速起步；接入真实数据库时把它换成 SQL 实现，
+// 应用层与接口层不用改一行。
+type {{.ModuleTitle}}Repo struct {
+	mu   sync.Mutex
+	data map[string]domain.{{.ModuleTitle}}
+}
+
+// New{{.ModuleTitle}}Repo 构造内存仓储。
+func New{{.ModuleTitle}}Repo() *{{.ModuleTitle}}Repo {
+	return &{{.ModuleTitle}}Repo{data: make(map[string]domain.{{.ModuleTitle}})}
+}
+
+// Save 写入一条记录。
+func (r *{{.ModuleTitle}}Repo) Save(ctx context.Context, v domain.{{.ModuleTitle}}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.data[v.Name] = v
+	return nil
+}
+
+// FindByName 按名字查询记录，查不到时返回 domain.ErrNotFound。
+func (r *{{.ModuleTitle}}Repo) FindByName(ctx context.Context, name string) (domain.{{.ModuleTitle}}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v, ok := r.data[name]
+	if !ok {
+		return domain.{{.ModuleTitle}}{}, domain.ErrNotFound
+	}
+	return v, nil
+}
+
+// Tx 实现 application.Transactor。内存实现没有真正的事务，直接执行。
+func (r *{{.ModuleTitle}}Repo) Tx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+{{end -}}
