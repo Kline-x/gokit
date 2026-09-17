@@ -65,6 +65,20 @@ func assertGoBuildable(t *testing.T, proj string) {
 	}
 }
 
+// assertGRPCNotGenerated 确认没开 --grpc 时，gRPC 相关产物一个都不该出现。
+// 条件渲染一旦退化成「总是生成」，四条构建测试全绿也发现不了——它们只验证
+// 了开着的时候文件在，从没验证过关着的时候文件不在。
+func assertGRPCNotGenerated(t *testing.T, proj, module string) {
+	t.Helper()
+
+	if _, err := os.Stat(filepath.Join(proj, "internal", module, "interfaces", "grpc.go")); err == nil {
+		t.Error("没有 --grpc 时不应该生成 internal/.../interfaces/grpc.go")
+	}
+	if _, err := os.Stat(filepath.Join(proj, "api")); err == nil {
+		t.Error("没有 --grpc 时不应该生成 api/ 目录")
+	}
+}
+
 // assertGRPCGenerated 确认 --grpc 真的生成了 gRPC 接口层与编译产物，
 // 而不是一个不消费 WithGRPC 的空 flag：开与不开生成结果不该完全一样。
 func assertGRPCGenerated(t *testing.T, proj, module string) {
@@ -111,6 +125,7 @@ func TestNewGeneratesBuildableProject(t *testing.T) {
 	}
 
 	assertGoBuildable(t, proj)
+	assertGRPCNotGenerated(t, proj, "hello")
 }
 
 // TestNewWithGRPCGeneratesBuildableProject 覆盖第二条参数路径：--sql 默认开着，
@@ -190,6 +205,39 @@ func TestNewWithoutSQLAndWithGRPCGeneratesBuildableProject(t *testing.T) {
 
 	assertGRPCGenerated(t, proj, "hello")
 	assertGoBuildable(t, proj)
+}
+
+// TestNewWithGRPCWhenProtocMissingKeepsFilesAndPrintsRemedy 覆盖降级路径：
+// protoc 不在 PATH 上时，--grpc 不能静默退化——文件要留着、退出码要非零、
+// 提示里要有完整的补救步骤，不然某天这条分支要是被改成了 return 0，
+// 使用者拿到的会是一个看起来生成成功、实际编译不过的项目，且查不出原因。
+//
+// 摘掉整个 PATH 就够了：runProtoc 失败会在跑 go mod tidy、wire 之前就
+// return，所以不需要 PATH 上还留着 go/wire，也不用担心它们被误跑到。
+func TestNewWithGRPCWhenProtocMissingKeepsFilesAndPrintsRemedy(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	proj := filepath.Join(t.TempDir(), "myapp")
+
+	var out bytes.Buffer
+	code := runNew(&out, []string{proj, "--mod", "example.com/myapp", "--grpc"})
+	if code == 0 {
+		t.Fatalf("protoc 缺失时应该返回非零退出码，实际是 0，输出：\n%s", out.String())
+	}
+
+	if _, err := os.Stat(filepath.Join(proj, "api", "hello", "v1", "hello.proto")); err != nil {
+		t.Errorf("protoc 缺失时 .proto 源文件应该留着：%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "internal", "hello", "interfaces", "grpc.go")); err != nil {
+		t.Errorf("protoc 缺失时 grpc.go 应该留着：%v", err)
+	}
+
+	msg := out.String()
+	for _, want := range []string{"protoc", "make tools", "make proto", "go mod tidy", "make wire"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("提示里应该包含补救步骤 %q，实际输出：\n%s", want, msg)
+		}
+	}
 }
 
 // TestNewGeneratesGofmtCleanProjectForNonExampleModulePath 专门盯字母序：

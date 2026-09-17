@@ -60,11 +60,11 @@ make wire
 make proto
 ```
 
-生成前需要装好 `protoc` 与两个插件（版本必须与 go.mod 锁定的一致）：
+生成前需要装好 `protoc`（[官方 release](https://github.com/protocolbuffers/protobuf/releases)）
+和两个插件，跑一次即可：
 
 ```bash
-go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.2
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+make tools
 ```
 {{end}}{{if .WithSQL}}
 ## 关于 go.mod 里的 go 1.25.0

@@ -96,10 +96,18 @@ func runNew(w io.Writer, args []string) int {
 	// 无论是 go mod tidy 还是 wire 接下来解析依赖都要用到它。
 	if *withGRPC {
 		if err := runProtoc(dst); err != nil {
+			// 这里 return 的时候项目里既没有 go.sum 也没有 wire_gen.go：
+			// 光说「跑 make proto 就行」不够，使用者装完 protoc、跑完
+			// make proto 之后，还会依次卡在缺 go.sum、undefined: initApp
+			// 上，一路排查过去才知道其实还差 go mod tidy 和 make wire
+			// 两步。把完整补救顺序一次性列全，不要让人自己踩出来。
 			fmt.Fprintf(w, "gokit: proto 生成没跑成：%v\n", err)
-			fmt.Fprintf(w, "文件已经生成好了，装上 protoc 与两个插件之后在 %s 里跑 make proto 即可：\n", dst)
-			fmt.Fprintln(w, "  go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.2")
-			fmt.Fprintln(w, "  go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1")
+			fmt.Fprintf(w, "文件已经生成好了，但还差几步才能构建，都在 %s 里依次执行：\n", dst)
+			fmt.Fprintln(w, "  1. 装好 protoc：https://github.com/protocolbuffers/protobuf/releases")
+			fmt.Fprintln(w, "  2. make tools   # 装两个 protoc 插件，版本已经钉在 Makefile 里")
+			fmt.Fprintln(w, "  3. make proto   # 生成 .pb.go")
+			fmt.Fprintln(w, "  4. go mod tidy  # 补齐 go.sum")
+			fmt.Fprintln(w, "  5. make wire    # 生成装配代码 wire_gen.go")
 			return 1
 		}
 	}
