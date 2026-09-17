@@ -20,12 +20,15 @@ func initApp(cfg Config) (*Bundle, error) {
 	panic(wire.Build(
 		provideLogConfig,
 		provideHTTPConfig,
-{{if .WithSQL}}		provideDBConfig,
+{{if .WithGRPC}}		provideGRPCConfig,
+{{end}}{{if .WithSQL}}		provideDBConfig,
 {{end}}		log.New,
 		provideApp,
 		provideHandler,
 		provideHTTPServer,
-		provideComponents,
+{{if .WithGRPC}}		provideServiceRegistrars,
+		provideGRPCServer,
+{{end}}		provideComponents,
 {{if .WithSQL}}		sqldb.New,
 		// 事务能力由共享的数据库组件提供。这个绑定放在组合根而不是业务模块里，
 		// 因为它把应用层的接口接到了全应用共享的基础设施上。

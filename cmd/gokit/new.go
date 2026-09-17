@@ -84,8 +84,24 @@ func runNew(w io.Writer, args []string) int {
 	fmt.Fprintf(w, "已生成 %s\n", dst)
 
 	if *skipTools {
-		fmt.Fprintln(w, "跳过了 go mod tidy 与 wire，记得自己跑一遍 make wire")
+		if *withGRPC {
+			fmt.Fprintln(w, "跳过了 go mod tidy、proto 生成与 wire，记得自己跑一遍 make proto 和 make wire")
+		} else {
+			fmt.Fprintln(w, "跳过了 go mod tidy 与 wire，记得自己跑一遍 make wire")
+		}
 		return 0
+	}
+
+	// 顺序不能反：interfaces/grpc.go import 的 api/.../v1 包要先有 .pb.go 才存在，
+	// 无论是 go mod tidy 还是 wire 接下来解析依赖都要用到它。
+	if *withGRPC {
+		if err := runProtoc(dst); err != nil {
+			fmt.Fprintf(w, "gokit: proto 生成没跑成：%v\n", err)
+			fmt.Fprintf(w, "文件已经生成好了，装上 protoc 与两个插件之后在 %s 里跑 make proto 即可：\n", dst)
+			fmt.Fprintln(w, "  go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.2")
+			fmt.Fprintln(w, "  go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1")
+			return 1
+		}
 	}
 
 	// 顺序不能反：wire 要能解析依赖才能生成，所以先 tidy。
@@ -118,6 +134,44 @@ func checkEmpty(dst string) error {
 		return fmt.Errorf("%s 不是空目录，换一个位置", dst)
 	}
 	return nil
+}
+
+// runProtoc 根据 dst/api 下的 .proto 生成 .pb.go，参数照抄仓库根 Makefile 的
+// proto 目标：--proto_path 与两个 --xxx_out 都指向同一个目录，生成物与 .proto
+// 同目录。dst 下没有任何 .proto 时什么也不做。
+func runProtoc(dst string) error {
+	protoDir := filepath.Join(dst, "api")
+	var protoFiles []string
+	err := filepath.WalkDir(protoDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) && path == protoDir {
+				return nil
+			}
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ".proto") {
+			rel, relErr := filepath.Rel(dst, path)
+			if relErr != nil {
+				return relErr
+			}
+			protoFiles = append(protoFiles, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("扫描 %s 下的 proto 文件失败: %w", protoDir, err)
+	}
+	if len(protoFiles) == 0 {
+		return nil
+	}
+
+	args := []string{
+		"--proto_path=api",
+		"--go_out=api", "--go_opt=paths=source_relative",
+		"--go-grpc_out=api", "--go-grpc_opt=paths=source_relative",
+	}
+	args = append(args, protoFiles...)
+	return runIn(dst, "protoc", args...)
 }
 
 func runIn(dir, name string, args ...string) error {

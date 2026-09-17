@@ -13,7 +13,13 @@ go run ./cmd/server
 ```bash
 curl -i localhost:8080/{{.Module}}/world
 ```
+{{if .WithGRPC}}
+gRPC 默认监听 `:9000`，同一个用例（Get）通过 `{{.ModuleTitle}}` 服务对外提供：
 
+```bash
+grpcurl -plaintext -d '{"name":"world"}' localhost:9000 {{.Module}}.v1.{{.ModuleTitle}}/Get
+```
+{{end}}
 配置文件在 `configs/config.yaml`，也可以用环境变量覆盖，前缀是 `{{.EnvPrefix}}`
 （大小写敏感，须用大写），例如 `{{.EnvPrefix}}_HTTP_ADDR`。
 
@@ -25,9 +31,10 @@ internal/{{.Module}}/
     domain/           领域层，只依赖标准库
     application/      应用层，编排用例、划定事务边界，对外只暴露 Service 接口
     infrastructure/   基础设施层，实现仓储契约{{if .WithSQL}}、管理数据库迁移{{end}}
-    interfaces/       接口层，把 HTTP 请求翻译成用例调用
+    interfaces/       接口层，把 HTTP{{if .WithGRPC}}/gRPC{{end}} 请求翻译成用例调用
     module.go         模块的装配入口（LocalSet）
-```
+{{if .WithGRPC}}api/{{.Module}}/v1/      {{.Module}} 模块的 gRPC 契约（.proto），编译产物由 make proto 生成
+{{end}}```
 
 这四层的依赖方向是单向的：domain 不依赖任何人；application 依赖本模块的
 domain，对外只暴露 Service 接口；infrastructure 实现 domain 的仓储契约；
@@ -43,7 +50,23 @@ provider、换了绑定）之后要重新生成：
 ```bash
 make wire
 ```
-{{if .WithSQL}}
+{{if .WithGRPC}}
+## 改了 proto 之后
+
+`api/{{.Module}}/v1/{{.Module}}.proto` 描述的是 gRPC 契约，实际生效的是同目录下
+生成的 `.pb.go`。改了 proto（加字段、加方法）之后要重新生成：
+
+```bash
+make proto
+```
+
+生成前需要装好 `protoc` 与两个插件（版本必须与 go.mod 锁定的一致）：
+
+```bash
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.2
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+```
+{{end}}{{if .WithSQL}}
 ## 关于 go.mod 里的 go 1.25.0
 
 这不是 gokit 框架本身的要求（框架是 go 1.22），而是示例用的 SQLite 驱动

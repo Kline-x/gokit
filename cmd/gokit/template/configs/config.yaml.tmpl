@@ -7,7 +7,13 @@ http:
   addr: ":8080"
   read_timeout: 15s
   write_timeout: 15s
-{{if .WithSQL}}
+{{if .WithGRPC}}
+grpc:
+  name: "grpcserver"
+  addr: ":9000"
+  shutdown_timeout: 10s
+  enable_reflection: true
+{{end}}{{if .WithSQL}}
 db:
   driver: sqlite
   dsn: "file:{{.Name}}.db"
