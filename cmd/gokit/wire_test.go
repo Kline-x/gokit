@@ -84,3 +84,41 @@ func TestWireReportsBrokenAssembly(t *testing.T) {
 		t.Errorf("报错信息里没带上 wire 自己的输出，排查不了：\n%s", out.String())
 	}
 }
+
+// TestWireReportsBuildFailureAfterSuccessfulGeneration 验的是 gokit wire
+// 相对 make wire（只跑 wire 生成）的全部增量：wire 生成成功、但生成结果编不
+// 过时，也必须报错，而不是把这次失败咽下去当成成功。
+//
+// wire.go 带 //go:build wireinject，wire 加载装配时只看得见它；反过来在
+// cmd/server 下放一个带 //go:build !wireinject 的文件、里面写一处类型错误，
+// wire 生成阶段看不到它（能正常生成），但 go build ./... 不带这个 tag，
+// 会编到它、报类型错误——这样就把「wire 生成成功」和「随后 build 失败」
+// 这两件事在同一次调用里都构造出来了，覆盖了两个现有测试都没走到的分支。
+func TestWireReportsBuildFailureAfterSuccessfulGeneration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("要真的跑代码生成与构建，慢")
+	}
+	requireTool(t, "go")
+	requireTool(t, "wire")
+
+	proj := filepath.Join(t.TempDir(), "myapp")
+	var out bytes.Buffer
+	if code := runNew(&out, []string{proj, "--mod", "example.com/myapp", "--replace", repoRoot(t)}); code != 0 {
+		t.Fatalf("准备项目失败，退出码 %d：\n%s", code, out.String())
+	}
+
+	broken := "//go:build !wireinject\n\npackage main\n\nvar _ int = \"类型错误\"\n"
+	brokenPath := filepath.Join(proj, "cmd", "server", "only_in_build.go")
+	if err := os.WriteFile(brokenPath, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	code := runWire(&out, []string{proj})
+	if code == 0 {
+		t.Fatalf("生成后构建不通过，gokit wire 却报成功：\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "生成后构建不通过") {
+		t.Errorf("输出里应该说明是构建这一步失败的，实际：\n%s", out.String())
+	}
+}
