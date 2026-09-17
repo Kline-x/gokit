@@ -88,8 +88,9 @@ go run ./cmd/server
 `--replace` 指向本地 gokit 检出路径，框架自身开发调试时用。完整参数看
 `gokit new -h`。
 
-生成之后 `gokit new` 会自动跑 `go mod tidy` 和 `wire`，把这两步跳过用
-`--skip-tools`。所以生成的项目要能立刻构建，本机得先装好这些外部工具：
+生成之后 `gokit new` 会自动跑 `go mod tidy` 和 `wire`，`--skip-tools` 可以跳过
+这两步；加了 `--grpc` 时，`--skip-tools` 还会一并跳过 proto 生成。所以生成的
+项目要能立刻构建，本机得先装好这些外部工具：
 
 - `wire`（`go install github.com/google/wire/cmd/wire@latest`）——任何时候都需要，负责生成装配代码。
 - 加了 `--grpc` 时还需要 `protoc`（[官方 release](https://github.com/protocolbuffers/protobuf/releases)）
