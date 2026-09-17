@@ -85,6 +85,31 @@ func TestNewGeneratesBuildableProject(t *testing.T) {
 	}
 }
 
+// TestNewGeneratesGofmtCleanProjectForNonExampleModulePath 专门盯字母序：
+// 其它生成测试全用 example.com/myapp，"e" 排在 "github.com" 前面，
+// 模板里但凡有一处把本项目 import 和第三方 import 硬编码在同一组、顺序写死，
+// 都会被这个巧合掩盖过去。这里换一个字母序排在 github.com 之后的域名，
+// 专门用来戳穿这类问题。用 --skip-tools 只落盘、不跑构建，保持这条用例快。
+func TestNewGeneratesGofmtCleanProjectForNonExampleModulePath(t *testing.T) {
+	requireTool(t, "gofmt")
+
+	proj := filepath.Join(t.TempDir(), "myapp")
+
+	if code := runNew(io.Discard, []string{proj, "--mod", "gitlab.com/myorg/myapp", "--skip-tools"}); code != 0 {
+		t.Fatalf("gokit new 退出码 != 0")
+	}
+
+	gofmtCmd := exec.Command("gofmt", "-l", ".")
+	gofmtCmd.Dir = proj
+	gofmtOut, err := gofmtCmd.Output()
+	if err != nil {
+		t.Fatalf("gofmt -l 执行失败: %v", err)
+	}
+	if dirty := strings.TrimSpace(string(gofmtOut)); dirty != "" {
+		t.Errorf("生成的项目不是 gofmt 干净的，以下文件需要重新格式化：\n%s", dirty)
+	}
+}
+
 // TestNewGeneratesLayerCleanProject 把 doctor 掉头指向自己的产物：
 // 脚手架生成的东西必须自己守得住分层规则。
 func TestNewGeneratesLayerCleanProject(t *testing.T) {
