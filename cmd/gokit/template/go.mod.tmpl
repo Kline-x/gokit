@@ -1,0 +1,12 @@
+module {{.ModPath}}
+
+{{if .WithSQL}}go 1.25.0{{else}}go 1.22{{end}}
+
+require (
+	github.com/Kline-x/gokit {{.GokitVersion}}
+	github.com/google/wire v0.7.0
+{{if .WithSQL}}	modernc.org/sqlite v1.59.0
+{{end}})
+{{if .Replace}}
+replace github.com/Kline-x/gokit => {{.Replace}}
+{{end}}

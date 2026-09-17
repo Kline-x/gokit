@@ -1,0 +1,35 @@
+// Package {{.Module}} 是{{.Module}}模块的装配入口。
+//
+// 模块对外只暴露两样东西：application.Service 接口，以及这里的装配集合。
+package {{.Module}}
+
+import (
+	"github.com/google/wire"
+
+	"{{.ModPath}}/internal/{{.Module}}/application"
+	"{{.ModPath}}/internal/{{.Module}}/domain"
+	"{{.ModPath}}/internal/{{.Module}}/infrastructure"
+	"{{.ModPath}}/internal/{{.Module}}/interfaces"
+)
+
+// LocalSet 是单体部署下的装配集合：Service 绑定到进程内实现。
+//
+// 本模块拆成独立服务后，可以另写一个 RemoteSet 把 application.Service
+// 绑定到 gRPC 客户端实现，调用方依赖的仍是同一个接口，代码无需改动。
+var LocalSet = wire.NewSet(
+	infrastructure.New{{.ModuleTitle}}Repo,
+	wire.Bind(new(domain.Repository), new(*infrastructure.{{.ModuleTitle}}Repo)),
+{{if .WithSQL}}
+	// 注意这里不提供 *sqldb.DB：数据库是整个应用共享的基础设施，
+	// 由组合根 cmd/server/wire.go 统一提供，事务能力（Transactor）也在
+	// 那里绑定。业务模块只声明自己需要什么，不负责创建共享资源。
+	infrastructure.NewMigrator,
+{{else}}
+	// 内存仓储没有共享的底层资源，事务能力就绑在仓储自己身上。
+	wire.Bind(new(application.Transactor), new(*infrastructure.{{.ModuleTitle}}Repo)),
+{{end}}
+	application.NewLocalService,
+	wire.Bind(new(application.Service), new(*application.LocalService)),
+
+	interfaces.NewHTTPHandler,
+)

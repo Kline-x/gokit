@@ -1,0 +1,15 @@
+log:
+  level: info
+  format: json
+  output: stdout
+
+http:
+  addr: ":8080"
+  read_timeout: 15s
+  write_timeout: 15s
+{{if .WithSQL}}
+db:
+  driver: sqlite
+  dsn: "file:{{.Name}}.db"
+  max_open_conns: 10
+{{end}}

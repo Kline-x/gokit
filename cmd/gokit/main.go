@@ -47,12 +47,6 @@ func main() {
 	}
 }
 
-// runNew 由 Task 3 实现。
-func runNew(w io.Writer, args []string) int {
-	fmt.Fprintln(w, "gokit new 尚未实现")
-	return 2
-}
-
 // runWire 由 Task 5 实现。
 func runWire(w io.Writer, args []string) int {
 	fmt.Fprintln(w, "gokit wire 尚未实现")

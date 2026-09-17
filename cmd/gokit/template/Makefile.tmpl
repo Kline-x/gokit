@@ -1,0 +1,21 @@
+# GO 指向要使用的 Go 工具链。默认取 PATH 上的 go；
+# 若本机的 Go 不在 PATH 上，可以覆盖，例如：
+#   make GO=$HOME/sdk/go/bin/go test
+GO ?= go
+
+.PHONY: build run test wire
+
+build:
+	$(GO) build ./...
+
+run:
+	$(GO) run ./cmd/server
+
+test:
+	$(GO) test -race ./...
+
+# wire 重新生成装配代码。改了 internal/*/module.go 或 cmd/server/wire.go
+# 之后要跑一遍，把结果提交进版本库——wire_gen.go 是生成好的文件，
+# 项目构建不依赖 wire 工具本身。
+wire:
+	$(GO) run github.com/google/wire/cmd/wire ./...
