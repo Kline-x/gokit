@@ -287,6 +287,13 @@ go install github.com/Kline-x/gokit/cmd/gokit@latest
 
 模板附带一个可运行的 `user` 示例模块：一条 HTTP 接口与一条 gRPC 接口打到同一个 `UserService`，仓储用 SQLite 实现，附各层示例测试。示例模块作为活文档，比 README 更能说明分层写法。
 
+**实际实现与上述设想的出入**（`cmd/gokit`，见 `docs/superpowers/plans/2026-09-16-scaffold-cli.md`）：
+
+- `gokit new` 没有做交互式提问，改成了参数开关：`--sql`（默认开）、`--grpc`（默认关）控制要不要生成对应组件；http 恒定生成，不在开关之列；redis、cron 这两个可选组件本身还没实现（见第 12 步第 8 步），自然也没有对应开关。
+- `gokit new module`（往现有项目里新增业务模块）**没有做**，留到后续单独立计划：往既有项目里加模块要解析并改写现成的 `wire.go`，风险与工作量都独立于「生成一个全新项目」，值得单独评估。
+- 示例模块默认名是 `hello`（可用 `--module` 改名），不叫 `user`；结构与设想一致——一条 HTTP 路由，加 `--grpc` 时同一个用例再挂一条 gRPC 方法，`--sql` 打开时仓储用 SQLite 实现，各层附带测试。
+- `gokit wire`、`gokit doctor` 的行为与上表一致：前者是 `wire ./...` 加一次 `go build ./...` 验证；后者除工具链检查外，也会检查 `internal/<模块>/<层>` 的分层依赖方向，违反时返回非零。
+
 ---
 
 ## 12. 实施顺序
@@ -298,7 +305,7 @@ go install github.com/Kline-x/gokit/cmd/gokit@latest
 3. 组件：`httpserver`、`sqldb`，跑通最小可用单体。（已完成，见 `docs/superpowers/plans/2026-09-15-gokit-kernel-and-core-components.md`）
 4. 组件：`grpcserver`、`grpcclient`，跑通同一个 Service 双协议暴露。（已完成，见 `docs/superpowers/plans/2026-09-16-transport-and-grpc.md`）
 5. `transport`：错误码 + 统一响应。（已完成，见 `docs/superpowers/plans/2026-09-16-transport-and-grpc.md`）
-6. 脚手架 CLI + 模板 + 示例模块。
+6. 脚手架 CLI + 模板 + 示例模块。（已完成，见 `docs/superpowers/plans/2026-09-16-scaffold-cli.md`）
 7. 拆分演示：把示例模块从单体切到独立进程，只改 `wire.go`，过程写成文档。（已完成，见 `docs/superpowers/plans/2026-09-16-split-demo.md`）
 8. 可选组件：`redis`、`cron`、`eventbus`。
 
