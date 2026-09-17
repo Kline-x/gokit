@@ -23,9 +23,20 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
+// requireTool 检查 name 是否在 PATH 上，不在时跳过当前测试。
+//
+// CI 环境下不允许跳过：CI 会显式装好 wire/protoc 等工具，全靠
+// actions/setup-go 把 `go install` 的产物目录（$(go env GOPATH)/bin）加进
+// PATH 这个隐含假设。这个假设一旦被工作流改动打破，四条验收测试 + 三条
+// wire 测试会从「跑过并通过」静默退化成「跳过」，而生成即可构建正是这个
+// 脚手架唯一的卖点——CI 全绿却什么都没验证过是最危险的状态，必须让它
+// 变成显式失败，而不是继续留一条只在工作流文件里维系的隐含约定。
 func requireTool(t *testing.T, name string) {
 	t.Helper()
 	if _, err := exec.LookPath(name); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("CI 环境下工具链必须齐备，这几条测试不允许跳过：PATH 上没有 %s: %v", name, err)
+		}
 		t.Skipf("PATH 上没有 %s，跳过；这个测试在完整工具链下必须实际运行", name)
 	}
 }

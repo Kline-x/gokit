@@ -52,6 +52,41 @@ func TestDoctorReportsZeroFilesChecked(t *testing.T) {
 	}
 }
 
+// --require-files 打开时，一个文件都没检查到应该返回非零退出码——这是
+// 给 CI 接的回归护栏用的开关：CI 今天跑 doctor 的那个目录恰好有文件，
+// 哪天目录形状变了，这条护栏不该从「查过且干净」静默退化成「什么都
+// 没查」还照样绿灯。
+func TestDoctorRequireFilesFlagFailsWhenNoFilesChecked(t *testing.T) {
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	code := runDoctor(&buf, []string{"--require-files", dir})
+
+	if code == 0 {
+		t.Errorf("--require-files 打开、且一个文件都没检查到时，退出码不该是 0")
+	}
+	if !strings.Contains(buf.String(), "未检查任何文件") {
+		t.Errorf("输出里应该说明未检查任何文件：\n%s", buf.String())
+	}
+}
+
+// --require-files 打开时，只要真的检查到了文件（哪怕干净、没有违反），
+// 依旧应该正常通过——这个开关只管「有没有查过」，不改变「查完发现什么」
+// 的判定。
+func TestDoctorRequireFilesFlagPassesWhenFilesChecked(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/domain/user.go", "context")
+
+	var buf bytes.Buffer
+	code := runDoctor(&buf, []string{"--require-files", root})
+
+	if code != 0 {
+		t.Errorf("--require-files 打开、但确实检查到了文件时，退出码不该非零：\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "检查了") {
+		t.Errorf("输出里应该报出检查了多少个文件：\n%s", buf.String())
+	}
+}
+
 // 有文件解析失败时，doctor 要照实报出来，且退出码不能是 0。
 func TestDoctorReportsParseFailuresAndFailsNonZero(t *testing.T) {
 	dir := t.TempDir()

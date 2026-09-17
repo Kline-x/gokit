@@ -7,8 +7,17 @@ import (
 	"testing"
 )
 
-// writeGo 在 root 下按相对路径写一个只有 import 的 Go 文件。
+// writeGo 在 root 下按相对路径写一个只有 import 的 Go 文件，包名固定是 p。
 func writeGo(t *testing.T, root, rel string, imports ...string) {
+	t.Helper()
+	writeGoPkg(t, root, rel, "p", imports...)
+}
+
+// writeGoPkg 与 writeGo 相同，但可以指定包名——用于需要写出真实的
+// package xxx_test 外部测试包这类场景，CheckLayers 本身按目录路径判定
+// 模块与层，不看包名，但用例名字若声称在验某种包形态，就该真的写出那种
+// 包形态，不然读代码的人会被注释带偏。
+func writeGoPkg(t *testing.T, root, rel, pkg string, imports ...string) {
 	t.Helper()
 
 	path := filepath.Join(root, rel)
@@ -17,7 +26,7 @@ func writeGo(t *testing.T, root, rel string, imports ...string) {
 	}
 
 	var b strings.Builder
-	b.WriteString("package p\n\nimport (\n")
+	b.WriteString("package " + pkg + "\n\nimport (\n")
 	for _, imp := range imports {
 		b.WriteString("\t\"" + imp + "\"\n")
 	}
@@ -487,10 +496,18 @@ func TestCheckLayersAllowsDomainSubpackage(t *testing.T) {
 
 // package domain_test 引用同目录的 domain 包，是 Go 里最标准的外部测试包
 // 写法，不该被当成「domain 只能依赖标准库」的违反。
+//
+// 用 writeGoPkg 真的写出 package domain_test（而不是 writeGo 固定的
+// package p），让这个用例名副其实。不过要说明：CheckLayers 判定模块与层
+// 靠的是目录路径（moduleAndLayer），完全不看文件内声明的包名，所以包名
+// 是不是 domain_test 并不影响 judge() 的走向——这里真正被验证的，是「同
+// 模块同层自引用」这条放行分支（user_test.go 与 user.go 同属 internal/
+// user/domain 目录），包名只是让测试代码本身更贴近真实的外部测试包写法，
+// 不产生新的断言点。
 func TestCheckLayersAllowsDomainExternalTestPackage(t *testing.T) {
 	root := t.TempDir()
 	writeGo(t, root, "internal/user/domain/user.go", "context")
-	writeGo(t, root, "internal/user/domain/user_test.go",
+	writeGoPkg(t, root, "internal/user/domain/user_test.go", "domain_test",
 		"example.com/app/internal/user/domain")
 
 	got, err := CheckLayers(root)
@@ -514,6 +531,28 @@ func TestCheckLayersAllowsApplicationSubpackage(t *testing.T) {
 	}
 	if len(got.Violations) != 0 {
 		t.Errorf("application 引用本层子包不该被判违反，实际 = %v", got.Violations)
+	}
+}
+
+// 上面两个子包用例（valueobject、dto）只搭了引用方，没有真的把被引用的
+// 子包目录建出来——它们只证明「引用子包不算违反」，没有顺带证明「子包
+// 目录里的文件本身仍然受所在层的规则约束」。moduleAndLayer 只看
+// internal/<模块>/<层>/... 里的第二段，子包只是让路径多一段，判定的
+// module、layer 不会变，所以规则理应对子包里的文件同样生效——这里补一个
+// 正向用例钉死这一点：domain 拆出来的 valueobject 子包里的文件本身，
+// 一样不能越过 domain 只能依赖标准库这条规则。
+func TestCheckLayersEnforcesRulesInsideSubpackageItself(t *testing.T) {
+	root := t.TempDir()
+	writeGo(t, root, "internal/user/domain/valueobject/v.go",
+		"github.com/stretchr/testify/assert")
+
+	got, err := CheckLayers(root)
+	if err != nil {
+		t.Fatalf("CheckLayers() error = %v", err)
+	}
+	if len(got.Violations) != 1 {
+		t.Fatalf("违反数 = %d, want 1（子包里的文件本身仍然受 domain 只能依赖标准库约束）：%v",
+			len(got.Violations), got.Violations)
 	}
 }
 

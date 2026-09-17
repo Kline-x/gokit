@@ -92,7 +92,7 @@ go run ./cmd/server
 这两步；加了 `--grpc` 时，`--skip-tools` 还会一并跳过 proto 生成。所以生成的
 项目要能立刻构建，本机得先装好这些外部工具：
 
-- `wire`（`go install github.com/google/wire/cmd/wire@latest`）——任何时候都需要，负责生成装配代码。
+- `wire`（`go install github.com/google/wire/cmd/wire@v0.7.0`）——任何时候都需要，负责生成装配代码；版本要与生成项目 `Makefile` 里 `make wire` 锁定的版本一致，生成器与运行时版本错配的后果见生成项目 `Makefile` 里的注释。
 - 加了 `--grpc` 时还需要 `protoc`（[官方 release](https://github.com/protocolbuffers/protobuf/releases)）
   和两个插件 `protoc-gen-go`、`protoc-gen-go-grpc`（生成项目自带的 `make tools`
   会按锁定版本装）。

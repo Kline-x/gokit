@@ -36,6 +36,8 @@ type check struct {
 func runDoctor(w io.Writer, args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(w)
+	requireFiles := fs.Bool("require-files", false,
+		"一个文件都没检查到时返回非零退出码（默认关）；接进 CI 的回归护栏用它防止目录形状变化后检查静默空跑")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -63,11 +65,20 @@ func runDoctor(w io.Writer, args []string) int {
 	if len(result.Violations) == 0 && len(result.ParseFailures) == 0 {
 		// 「一个文件都没查」和「查过且干净」在输出上必须分得开，否则使用者
 		// 看到的绿灯可能只是因为目录形状没对上、根本没检查任何文件。
-		detail := "没有找到 internal/<模块>/<层> 结构，未检查任何文件"
-		if result.FilesChecked > 0 {
-			detail = fmt.Sprintf("检查了 %d 个文件，没有发现违反", result.FilesChecked)
+		if result.FilesChecked == 0 {
+			detail := "没有找到 internal/<模块>/<层> 结构，未检查任何文件"
+			if *requireFiles {
+				// --require-files 打开时，「一个文件都没查」不再算通过——
+				// 接进 CI 的回归护栏原本是靠某个固定目录今天恰好有文件撑着，
+				// 目录形状一旦变化，护栏会从「查过且干净」静默退化成
+				// 「什么都没查」，这个开关就是把这类退化钉成显式失败。
+				printCheck(w, check{name: "依赖方向", ok: false, detail: detail + "（--require-files 要求至少检查到一个文件）"})
+				return 1
+			}
+			printCheck(w, check{name: "依赖方向", ok: true, detail: detail})
+			return 0
 		}
-		printCheck(w, check{name: "依赖方向", ok: true, detail: detail})
+		printCheck(w, check{name: "依赖方向", ok: true, detail: fmt.Sprintf("检查了 %d 个文件，没有发现违反", result.FilesChecked)})
 		return 0
 	}
 	for _, v := range result.Violations {
@@ -101,6 +112,11 @@ func toolchainChecks() []check {
 
 func goVersionCheck() check {
 	v, ok := goVersionFromPATH()
+	// fallbackNote 只在真正走了兜底分支时才非空，追加在 detail 末尾说明
+	// 这个版本号的真实来源——不然单看这一行的数字，会误以为 PATH 上装的
+	// 就是这个版本，实际它是编译 gokit 这个二进制所用的工具链版本，
+	// 与 gokit new/wire 实际会调用的那个 go 可能完全不是同一个。
+	fallbackNote := ""
 	if !ok {
 		// PATH 上的 go 跑不起来或解析不出版本号（没装、或者输出格式变了）时，
 		// 退回编译 gokit 这个二进制所用的工具链版本兜底。这条兜底必须留着
@@ -108,21 +124,22 @@ func goVersionCheck() check {
 		// 与 gokit new/wire 实际会调用的那个 go 不是同一个——预编译二进制
 		// 分发、机器上装了多个 Go、CI 里 gokit 来自缓存，都会让这个数字失真。
 		v = runtime.Version()
+		fallbackNote = "；PATH 上没有可执行的 go，这个版本号来自编译 gokit 这个二进制所用的工具链，不代表 PATH 上会被 new/wire 实际调用的那个 go"
 	}
 	minor, parsed := goMinor(v)
 	if !parsed {
-		return check{name: "Go 版本", ok: false, detail: "认不出版本号 " + v}
+		return check{name: "Go 版本", ok: false, detail: "认不出版本号 " + v + fallbackNote}
 	}
 	if minor < minGoMinor {
 		return check{
 			name:   "Go 版本",
 			ok:     false,
-			detail: fmt.Sprintf("%s，低于框架要求的 1.%d", v, minGoMinor),
+			detail: fmt.Sprintf("%s，低于框架要求的 1.%d%s", v, minGoMinor, fallbackNote),
 		}
 	}
 	detail := fmt.Sprintf(
-		"%s（框架要求 ≥1.%d；带 --sql 生成的项目要求 ≥1.%d，来自 SQLite 驱动，不是 gokit 的要求）",
-		v, minGoMinor, minGoMinorSQL,
+		"%s（框架要求 ≥1.%d；带 --sql 生成的项目要求 ≥1.%d，来自 SQLite 驱动，不是 gokit 的要求）%s",
+		v, minGoMinor, minGoMinorSQL, fallbackNote,
 	)
 	return check{name: "Go 版本", ok: true, detail: detail}
 }

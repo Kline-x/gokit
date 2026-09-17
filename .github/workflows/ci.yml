@@ -25,7 +25,7 @@ jobs:
         working-directory: example/minimal
       - run: go test -race ./...
         working-directory: example/minimal
-      - run: go run ./cmd/gokit doctor example/minimal
+      - run: go run ./cmd/gokit doctor --require-files example/minimal
 
   lint:
     runs-on: ubuntu-latest
