@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -41,6 +42,11 @@ func runNew(w io.Writer, args []string) int {
 	skipTools := fs.Bool("skip-tools", false, "只落盘，不跑 go mod tidy 与 wire")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// -h/--help 是使用者主动要求看帮助，不是用错了参数，退出码该是
+			// 0——脚本、CI 里 `gokit new -h` 不该被当成执行失败。
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 1 {
@@ -58,8 +64,9 @@ func runNew(w io.Writer, args []string) int {
 		return 2
 	}
 	if !validGoIdentifier(*module) {
-		fmt.Fprintf(w, "gokit: --module 的值 %q 不是合法的 Go 标识符（须以字母或下划线开头，"+
-			"其余字符只能是字母、数字或下划线），它会被原样用作生成代码里的包名\n", *module)
+		fmt.Fprintf(w, "gokit: --module 的值 %q 不是合法的 Go 标识符（须以字母开头，"+
+			"其余字符只能是字母、数字或下划线，且不能是 Go 保留字），"+
+			"它会被原样用作生成代码里的包名\n", *module)
 		return 2
 	}
 	if err := checkEmpty(dst); err != nil {
@@ -73,7 +80,7 @@ func runNew(w io.Writer, args []string) int {
 		Name:         name,
 		Module:       *module,
 		ModuleTitle:  title(*module),
-		EnvPrefix:    strings.ToUpper(name),
+		EnvPrefix:    envPrefix(name),
 		GokitVersion: *version,
 		Replace:      filepath.ToSlash(*replace),
 		WithSQL:      *withSQL,
@@ -195,27 +202,91 @@ func runIn(dir, name string, args ...string) error {
 	return nil
 }
 
+// lastSegment 取模块路径的最后一段，作为生成项目的应用名。
+//
+// Go 模块的主版本后缀（v2、v10 这类 /vN）不算应用名的一部分：
+// --mod github.com/org/myapp/v2 的末段是 "v2"，直接取最后一段会把版本号
+// 当成应用名，进而污染 DSN 文件名、.gitignore 条目等一大片生成内容。
+// 跳过版本后缀段，往前找第一个不是版本后缀的段。
 func lastSegment(modPath string) string {
-	if i := strings.LastIndexByte(modPath, '/'); i >= 0 {
-		return modPath[i+1:]
+	segs := strings.Split(modPath, "/")
+	for i := len(segs) - 1; i >= 0; i-- {
+		if isMajorVersionSuffix(segs[i]) {
+			continue
+		}
+		return segs[i]
 	}
 	return modPath
 }
 
-// validGoIdentifier 检查 s 是否是一个合法的 Go 标识符：以字母或下划线开头，
-// 其余字符只能是字母、数字或下划线。--module 的值会被原样用作包名，
-// 不合法的包名（比如带连字符）生成出来的项目编译不过。
+// isMajorVersionSuffix 判断 s 是不是形如 v2、v10 的 Go 模块主版本后缀段。
+func isMajorVersionSuffix(s string) bool {
+	if len(s) < 2 || s[0] != 'v' {
+		return false
+	}
+	for _, r := range s[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// envPrefix 把应用名转换成合法的环境变量名前缀。
+//
+// POSIX shell 的变量名只能由字母、数字、下划线组成，且不能以数字开头。
+// 应用名原样大写后直接当前缀，遇到连字符（仓库名里极其常见，例如
+// my-app）会产出 MY-APP_HTTP_ADDR 这种在任何 POSIX shell 里都设不了的
+// 变量名——export MY-APP_HTTP_ADDR=x 本身就是语法错误。
+func envPrefix(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(name) {
+		switch {
+		case r == '_' || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := b.String()
+	if out == "" || (out[0] >= '0' && out[0] <= '9') {
+		out = "_" + out
+	}
+	return out
+}
+
+// goKeywords 是 Go 的 25 个保留字。语法上它们和普通标识符长得一样，
+// 但用作包名（--module select）编译不过：package select 是语法错误。
+var goKeywords = map[string]bool{
+	"break": true, "case": true, "chan": true, "const": true, "continue": true,
+	"default": true, "defer": true, "else": true, "fallthrough": true, "for": true,
+	"func": true, "go": true, "goto": true, "if": true, "import": true,
+	"interface": true, "map": true, "package": true, "range": true, "return": true,
+	"select": true, "struct": true, "switch": true, "type": true, "var": true,
+}
+
+// validGoIdentifier 检查 s 是否是一个合法、能安全用在生成代码里的 Go
+// 标识符：首字符必须是字母，其余字符只能是字母、数字或下划线，且不能是
+// Go 保留字。--module 的值会被原样用作生成代码里的包名，还会经 title()
+// 大写首字母拼进类型名（{{.ModuleTitle}}Request）。
+//
+// 首字符不再放开下划线：下划线开头本身是合法的 Go 标识符，但 --module _
+// 生成的是 package _（Go 语法不允许把 _ 当包名），--module _foo 会让
+// title() 产出的类型名 _fooRequest 保持小写开头、未导出，一旦别的生成
+// 文件跨包引用它就编译不过——这两种都是「语法上是标识符，用在这里就炸」，
+// 不该放行。
 func validGoIdentifier(s string) bool {
-	if s == "" {
+	if s == "" || goKeywords[s] {
 		return false
 	}
 	for i, r := range s {
-		switch {
-		case r == '_' || unicode.IsLetter(r):
-			// 字母或下划线在任何位置都合法。
-		case unicode.IsDigit(r) && i > 0:
-			// 数字只在非开头位置合法。
-		default:
+		if i == 0 {
+			if !unicode.IsLetter(r) {
+				return false
+			}
+			continue
+		}
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
 			return false
 		}
 	}

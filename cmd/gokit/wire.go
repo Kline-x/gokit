@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,9 @@ func runWire(w io.Writer, args []string) int {
 	fs := flag.NewFlagSet("wire", flag.ContinueOnError)
 	fs.SetOutput(w)
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 

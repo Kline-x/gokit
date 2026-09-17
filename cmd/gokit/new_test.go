@@ -367,3 +367,143 @@ func TestNewRejectsModPathWithWhitespace(t *testing.T) {
 		t.Error("--mod 包含空白字符应该被拒绝，实际成功了")
 	}
 }
+
+// --- 以下是本轮最终评审新增的用例 ---
+
+// TestLastSegmentSkipsMajorVersionSuffix 覆盖 Go 模块主版本后缀（/v2、/v10）
+// 不该被当成应用名的情形：直接取最后一段会把版本号污染进 DSN 文件名、
+// .gitignore 条目等一大片生成内容。
+func TestLastSegmentSkipsMajorVersionSuffix(t *testing.T) {
+	cases := []struct {
+		mod  string
+		want string
+	}{
+		{"github.com/org/myapp", "myapp"},
+		{"github.com/org/myapp/v2", "myapp"},
+		{"github.com/org/myapp/v10", "myapp"},
+		{"example.com/myapp", "myapp"},
+	}
+	for _, tc := range cases {
+		if got := lastSegment(tc.mod); got != tc.want {
+			t.Errorf("lastSegment(%q) = %q, want %q", tc.mod, got, tc.want)
+		}
+	}
+}
+
+// TestEnvPrefixReplacesInvalidChars 覆盖连字符仓库名：POSIX shell 变量名
+// 不允许连字符，export MY-APP_HTTP_ADDR=x 本身就是语法错误。
+func TestEnvPrefixReplacesInvalidChars(t *testing.T) {
+	if got, want := envPrefix("my-app"), "MY_APP"; got != want {
+		t.Errorf("envPrefix(%q) = %q, want %q", "my-app", got, want)
+	}
+}
+
+// TestEnvPrefixDoesNotStartWithDigit 覆盖应用名本身以数字开头的边界情况：
+// 数字开头的变量名在 POSIX shell 里同样不合法。
+func TestEnvPrefixDoesNotStartWithDigit(t *testing.T) {
+	got := envPrefix("2app")
+	if got == "" {
+		t.Fatalf("envPrefix(%q) 返回空字符串", "2app")
+	}
+	if got[0] >= '0' && got[0] <= '9' {
+		t.Errorf("envPrefix(%q) = %q，不能以数字开头", "2app", got)
+	}
+}
+
+// TestNewNormalizesEnvPrefixForHyphenatedRepoName 是端到端验证：连字符
+// 仓库名生成出来的项目，README 里的环境变量前缀必须是能在 shell 里设置的。
+func TestNewNormalizesEnvPrefixForHyphenatedRepoName(t *testing.T) {
+	proj := filepath.Join(t.TempDir(), "myapp")
+	var out bytes.Buffer
+	if code := runNew(&out, []string{proj, "--mod", "gitlab.com/myorg/my-app", "--skip-tools"}); code != 0 {
+		t.Fatalf("gokit new 退出码 = %d：\n%s", code, out.String())
+	}
+
+	readme, err := os.ReadFile(filepath.Join(proj, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(readme), "MY_APP_HTTP_ADDR") {
+		t.Errorf("连字符仓库名应该产出 MY_APP_HTTP_ADDR 这个前缀，README 里没找到：\n%s", readme)
+	}
+	if strings.Contains(string(readme), "MY-APP") {
+		t.Errorf("EnvPrefix 不该包含连字符，README 里却有 MY-APP：\n%s", readme)
+	}
+}
+
+// TestNewStripsMajorVersionSuffixFromAppName 是端到端验证：--mod 带
+// Go 模块主版本后缀时，应用名（进而 DSN 文件名）不该是版本号本身。
+func TestNewStripsMajorVersionSuffixFromAppName(t *testing.T) {
+	proj := filepath.Join(t.TempDir(), "myapp")
+	var out bytes.Buffer
+	if code := runNew(&out, []string{proj, "--mod", "github.com/org/myapp/v2", "--skip-tools"}); code != 0 {
+		t.Fatalf("gokit new 退出码 = %d：\n%s", code, out.String())
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(proj, "configs", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), "file:myapp.db") {
+		t.Errorf("应用名应该跳过 v2 这个主版本后缀取成 myapp，配置里没找到 file:myapp.db：\n%s", cfg)
+	}
+	if strings.Contains(string(cfg), "file:v2.db") {
+		t.Errorf("v2 这个 Go 主版本后缀不该被当成应用名，配置里却出现了 file:v2.db：\n%s", cfg)
+	}
+}
+
+// TestValidGoIdentifierRejectsKeywords 覆盖 Go 保留字：语法上是合法标识符，
+// 用作包名却编译不过（package select 是语法错误）。
+func TestValidGoIdentifierRejectsKeywords(t *testing.T) {
+	for _, kw := range []string{"select", "package", "var", "range", "for"} {
+		if validGoIdentifier(kw) {
+			t.Errorf("validGoIdentifier(%q) = true，Go 保留字不该被判合法", kw)
+		}
+	}
+}
+
+// TestValidGoIdentifierRequiresLetterStart 覆盖下划线开头两种会炸的情形：
+// "_" 本身不能作为包名（Go 语法不允许），"_foo" 会让 title() 产出的类型名
+// 保持未导出，跨包引用编译不过。
+func TestValidGoIdentifierRequiresLetterStart(t *testing.T) {
+	for _, s := range []string{"_", "_foo", "1foo"} {
+		if validGoIdentifier(s) {
+			t.Errorf("validGoIdentifier(%q) = true，首字符非字母不该被判合法", s)
+		}
+	}
+}
+
+// TestNewRejectsReservedWordModule 是端到端验证：--module select 之前能
+// 生成成功、退出码 0，产出 package select，编译必然失败。
+func TestNewRejectsReservedWordModule(t *testing.T) {
+	var out bytes.Buffer
+	dst := filepath.Join(t.TempDir(), "myapp")
+	code := runNew(&out, []string{dst, "--mod", "example.com/myapp", "--module", "select", "--skip-tools"})
+	if code == 0 {
+		t.Error("--module select 是 Go 保留字，应该被拒绝，实际成功了")
+	}
+	if _, err := os.Stat(dst); err == nil {
+		t.Error("--module 校验失败时不应该已经落盘")
+	}
+}
+
+// TestSubcommandHelpExitsZero 覆盖三条子命令的 -h：flag.ErrHelp 之前被统一
+// return 2，脚本/CI 里 `gokit new -h` 会被当成失败，与顶层 -h 的退出码 0
+// 不一致。
+func TestSubcommandHelpExitsZero(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(io.Writer, []string) int
+	}{
+		{"new", runNew},
+		{"wire", runWire},
+		{"doctor", runDoctor},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if code := tc.run(io.Discard, []string{"-h"}); code != 0 {
+				t.Errorf("gokit %s -h 退出码 = %d, want 0", tc.name, code)
+			}
+		})
+	}
+}
